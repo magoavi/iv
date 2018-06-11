@@ -17,10 +17,10 @@
 This report analyses aggregate level data for the fragrance market in Italy. The primary objectives of this
 research are as follows:
 
-a) Assess the Price Sensitivity of Each Focal Brand
-b) Assess the Communication Impact for Each of the Focal Brands
-c) Assess the Competitive Effects
-d) Advice on Budget Allocation and Optimisation for the Rest of the Year 2017.
+1) Assess the Price Sensitivity of Each Focal Brand
+2) Assess the Communication Impact for Each of the Focal Brands
+3) Assess the Competitive Effects
+4) Advice on Budget Allocation and Optimisation for the Rest of the Year 2017.
 
 > This research uses regression models created using `Ordinary Least Squares (OLS)` as well as `Instrumental
 Variables (IV)`. IV is used to overcome the issue of reverse causality which causes an endogeneity problem in

@@ -1,0 +1,2685 @@
+---
+output: 
+  pdf_document:
+    number_sections: yes
+    fig_caption: yes
+    latex_engine: xelatex
+header-includes:
+  - \usepackage{xcolor}
+  - \usepackage{fontspec}
+  - \setmainfont{Avenir}
+  - \usepackage{fancyhdr}
+  - \usepackage{xcolor}
+  - \pagestyle{fancy}
+  - \fancyhead[CO,CE]{}
+  - \fancyfoot[CO,CE]{BS1813| Candidate No. 01437771}
+  - \fancyfoot[LE,RO]{\thepage}
+  - \fancypagestyle{appendix}{%
+  - \fancyhead{}
+  - \renewcommand{\headrulewidth}{0pt}}
+bibliography: retail_bibliography.bib
+---
+
+\clearpage\maketitle
+\vspace{\fill}
+\abstract
+  
+  This report analyses aggregate level data for the fragrance market in Italy. The primary objectives of this research are as follows: \newline
+   
+  a) Assess the Price Sensitivity of Each Focal Brand
+  b) Assess the Communication Impact for Each of the Focal Brands
+  c) Assess the Competitive Effects
+  d) Advice on Budget Allocation and Optimisation for the Rest of the Year 2017.
+  \newline
+   
+  This research uses regression models created using Ordinary Least Squares (OLS) as well as Instrumental Variables (IV). IV is used to overcome the issue of reverse causality which causes an endogeneity problem in identifying the impact of the communication variables as well as the price sensitivity of the focal brands. \newline
+   
+  This study finds that the focal fragrance brands could reduce their prices near their main selling period to realise higher revenue. Further, fragrances sold in bundles can still face competitive effects due to communication spend done by competing fragrances sold in the same package.
+\vspace{\fill}
+
+\pagebreak
+
+\tableofcontents
+
+\pagebreak
+
+\listoffigures
+\listoftables
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.pos = 'H')
+```
+
+```{r Loading libraries, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+library(readxl)
+library(ggthemes)
+library(ggplot2)
+library(Hmisc) # Lag varibale
+library(leaps) # Regsubsets
+library(lmtest) # bp and white test
+library(car) # VIF
+library(reshape2) # Melt
+library(stargazer)
+library(sandwich) # Robust Standard Errors
+library(ivpack)
+library(gridExtra)
+library(tseries) # Unit root test
+library(dplyr) # Pipe function
+library(knitr) # Kable
+library(kableExtra) # Kable styling
+library(png) # for grabbing the dimension of png files
+library(float)
+```
+
+```{r Loading Dataset, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+datapath         <- 'Database Fragrances RMA.xlsx'
+data.unprocessed <- read_excel(datapath)
+```
+
+```{r Loading Additional Data, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+# Google Trends for Brands
+data.c1            <- read.csv("google_trend_data/c1.csv", skip = 2)
+colnames(data.c1)  <- c("Date", "c1")
+data.c2               <- read.csv("google_trend_data/c2.csv", skip = 2)
+colnames(data.c2)     <- c("Date", "c2")
+data.c3           <- read.csv("google_trend_data/c3.csv", skip = 2)
+colnames(data.c3) <- c("Date", "c3")
+
+# Google Trends for Perfumes
+data.c1_si                          <- read.csv("google_trend_data/c1_si.csv", skip = 2)
+colnames(data.c1_si)                <- c("Date", "c1_si")
+data.c2_black_opium                    <- read.csv("google_trend_data/c2_black_opium.csv", skip = 2)
+colnames(data.c2_black_opium)          <- c("Date", "sl_black_opium")
+data.c3_la_vie_est_belle           <- read.csv("google_trend_data/c3_la_vie_est_belle.csv", skip = 2)
+colnames(data.c3_la_vie_est_belle) <- c("Date", "c3_la_vie_est_belle")
+
+# Google Trends for Brand Perfumes
+data.c1_profumo            <- read.csv("google_trend_data/c1_profumo.csv", skip = 2)
+colnames(data.c1_profumo)  <- c("Date", "c1_profumo")
+data.c2_profumo               <- read.csv("google_trend_data/c2_profumo.csv", skip = 2)
+colnames(data.c2_profumo)     <- c("Date", "c2_profumo")
+data.c3_profumo           <- read.csv("google_trend_data/c3_profumo.csv", skip = 2)
+colnames(data.c3_profumo) <- c("Date", "c3_profumo")
+
+# Google Trends for Perfume in general
+data.profumo           <- read.csv("google_trend_data/profumo.csv", skip = 2)
+colnames(data.profumo) <- c("Date", "profumo")
+```
+
+```{r Merging New Data with data.unprocessed, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+data.unprocessed['c1']                   <- data.c1[,2]
+data.unprocessed['c2']                      <- data.c2[,2]
+data.unprocessed['c3']                  <- data.c3[,2]
+data.unprocessed['c1_si']                <- data.c1_si[,2]
+data.unprocessed['c2_black_opium']          <- data.c2_black_opium[,2]
+data.unprocessed['c3_la_vie_est_belle'] <- data.c3_la_vie_est_belle[,2]
+data.unprocessed['c1_profumo']           <- data.c1_profumo[,2]
+data.unprocessed['c2_profumo']              <- data.c2_profumo[,2]
+data.unprocessed['c3_profumo']          <- data.c3_profumo[,2]
+data.unprocessed['profumo']                  <- data.profumo[,2]
+```
+
+```{r Data Processing, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+# Adding variables
+data.unprocessed['Date']                 <- as.Date(data.unprocessed$Date, "%Y/%m/%d")
+data.unprocessed['main_selling_period']  <- ifelse(data.unprocessed$Date == "2015-02-08" | # Valentine's Day Week 2015
+                                            data.unprocessed$Date == "2016-02-07" | # Valentine's Day Week 2016
+                                            data.unprocessed$Date == "2017-02-05" | # Valentine's Day Week 2017
+                                            data.unprocessed$Date == "2017-02-12" | # Valentine's Day Week 2017
+                                            data.unprocessed$Date == "2015-05-03" | # Mother's Day Week 2015
+                                            data.unprocessed$Date == "2016-05-01" | # Mother's Day Week 2016
+                                            data.unprocessed$Date == "2017-05-07" | # Mother's Day Week 2017
+                                            data.unprocessed$Date == "2015-09-13" | # Frangraze Fair 2015 
+                                            data.unprocessed$Date == "2016-09-11" | # Frangraze Fair 2016  
+                                            data.unprocessed$Date == "2015-12-06" | # Christmas Month 2015
+                                            data.unprocessed$Date == "2015-12-13" | # Christmas Month 2015
+                                            data.unprocessed$Date == "2015-12-20" | # Christmas Month 2015
+                                            data.unprocessed$Date == "2015-12-27" | # Christmas Month 2015
+                                            data.unprocessed$Date == "2016-12-04" | # Christmas Month 2016
+                                            data.unprocessed$Date == "2016-12-11" | # Christmas Month 2016
+                                            data.unprocessed$Date == "2016-12-18" | # Christmas Month 2016
+                                            data.unprocessed$Date == "2016-12-25" , # Christmas Month 2016
+                                            1, 0)
+
+data.unprocessed['lag_volume_c1_si'] <- Lag(data.unprocessed$Volume_c1_SI, +1)
+data.unprocessed['lag_volume_c2_black_opium'] <- Lag(data.unprocessed$Volume_c2_BLACK_OPIUM, +1)
+data.unprocessed['lag_volume_c3_la_vie_est_belle'] <- Lag(data.unprocessed$Volume_c3_LA_VIE_EST_BELLE, +1)
+
+# Only considering focal brands (Since data is inconsistent)
+data.unprocessed['investment_non_competitors'] <- data.unprocessed$Investment_TOTAL_MARKET - data.unprocessed$Investment_c2_BLACK_OPIUM - 
+                                                  data.unprocessed$Investment_c3_LA_VIE_EST_BELLE
+# Iv Variable
+data.unprocessed$non_com_high_in <- ifelse(data.unprocessed$investment_non_competitors > 299880, 1, 0)
+
+# Competitive Effects
+# Value_Focal
+data.unprocessed$value_focal <- data.unprocessed$Value_c1_SI + data.unprocessed$Value_c2_BLACK_OPIUM + data.unprocessed$Value_c3_LA_VIE_EST_BELLE
+
+# c1 Si
+data.unprocessed$ar.mrkt.share <- data.unprocessed$Value_c1_SI/data.unprocessed$value_focal
+data.unprocessed$ar.mrkt.share.lag <- Lag(data.unprocessed$ar.mrkt.share, +1)
+
+# c2 Black Opium
+data.unprocessed$c2.mrkt.share <- data.unprocessed$Value_c2_BLACK_OPIUM/data.unprocessed$value_focal
+data.unprocessed$c2.mrkt.share.lag <- Lag(data.unprocessed$c2.mrkt.share, +1)
+
+# c3
+data.unprocessed$lan.mrkt.share <- data.unprocessed$Value_c3_LA_VIE_EST_BELLE/data.unprocessed$value_focal
+data.unprocessed$lan.mrkt.share.lag <- Lag(data.unprocessed$lan.mrkt.share, +1)
+
+# Changing Variable Type and Name
+data.unprocessed['Record']    <- as.numeric(data.unprocessed$Record)
+colnames(data.unprocessed)[1] <- c("Week Number")
+
+
+# Final dataset
+data <- data.unprocessed
+```
+
+```{r EDA, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+# Removing scientific notation in the graph
+options(scipen=10000)
+
+# c1 Si
+# Resizing secondary bars
+normalizer  <- 0.05 
+# Plot
+p.c1_si <- ggplot(data, aes(y= Volume_c1_SI, x = Date)) + geom_line() + 
+               geom_col(aes(x = Date, y = Investment_c1_SI*normalizer), fill = "black", alpha =0.6) +
+               annotate("rect", xmin = 	data$Date[6], xmax =  data$Date[7], alpha = .2, ymin = 0, ymax = max(data$Volume_c1_SI), fill = 'red') +
+               annotate("rect", xmin = 	data$Date[58], xmax =  data$Date[59], alpha = .2, ymin = 0, ymax = max(data$Volume_c1_SI), fill = 'red') +
+               annotate("rect", xmin = 	data$Date[110], xmax =  data$Date[111], alpha = .2, ymin = 0, ymax = max(data$Volume_c1_SI), fill = 'red') +
+               annotate("rect", xmin = 	data$Date[48], xmax =  data$Date[52], alpha = .2, ymin = 0, ymax = max(data$Volume_c1_SI), fill = 'green') +
+               annotate("rect", xmin = 	data$Date[100], xmax =  data$Date[104], alpha = .2, ymin = 0, ymax = max(data$Volume_c1_SI), fill = 'green') +
+               annotate("rect", xmin = 	data$Date[18], xmax =  data$Date[19], alpha = .2, ymin = 0, ymax = max(data$Volume_c1_SI), fill = 'lightblue') +
+               annotate("rect", xmin = 	data$Date[70], xmax =  data$Date[71], alpha = .2, ymin = 0, ymax = max(data$Volume_c1_SI), fill = 'lightblue') +
+               annotate("rect", xmin = 	data$Date[123], xmax =  data$Date[124], alpha = .2, ymin = 0, ymax = max(data$Volume_c1_SI), fill = 'lightblue') +
+               annotate("rect", xmin = 	data$Date[37], xmax =  data$Date[38], alpha = .2, ymin = 0, ymax = max(data$Volume_c1_SI), fill = 'orange') +
+               annotate("rect", xmin = 	data$Date[89], xmax =  data$Date[90], alpha = .2, ymin = 0, ymax = max(data$Volume_c1_SI), fill = 'orange') +
+               scale_y_continuous(sec.axis = sec_axis(trans= ~./normalizer, name = 'Investment')) +
+               theme_few() + labs(y = "Sales Quanity", title = "c1 Si") + 
+               theme(legend.position='none',axis.text.x = element_text(angle = 90, hjust = 1), plot.title = element_text(hjust = 0.5)) +
+               scale_x_date(date_labels= "%b %y", date_breaks  ="1 month") +  theme(axis.title.x=element_blank())
+
+# Exporting graphs for clean up
+#ggsave("plot.pdf", p.c1_si, height = 5, width = 9.6, dpi = 600)
+
+# c2 Black Opium
+# Resizing secondary bars
+normalizer  <- 0.04 
+# Plot
+p.c2_black_opium <- ggplot(data, aes(y= Volume_c2_BLACK_OPIUM, x = Date)) + geom_line() + 
+                     geom_col(aes(x = Date, y = Investment_c2_BLACK_OPIUM*normalizer), fill = "black", alpha =0.6) +
+                     annotate("rect", xmin = 	data$Date[6], xmax =  data$Date[7], alpha = .2, ymin = 0, ymax = max(data$Volume_c2_BLACK_OPIUM), fill = 'red') +
+                     annotate("rect", xmin = 	data$Date[58], xmax =  data$Date[59], alpha = .2, ymin = 0, ymax = max(data$Volume_c2_BLACK_OPIUM), fill = 'red') +
+                     annotate("rect", xmin = 	data$Date[110], xmax =  data$Date[111], alpha = .2, ymin = 0, ymax = max(data$Volume_c2_BLACK_OPIUM), fill = 'red') +
+                     annotate("rect", xmin = 	data$Date[48], xmax =  data$Date[52], alpha = .2, ymin = 0, ymax = max(data$Volume_c2_BLACK_OPIUM), fill = 'green') +
+                     annotate("rect", xmin = 	data$Date[100], xmax =  data$Date[104], alpha = .2, ymin = 0, ymax = max(data$Volume_c2_BLACK_OPIUM), fill = 'green') +
+                     annotate("rect", xmin = 	data$Date[18], xmax =  data$Date[19], alpha = .2, ymin = 0, ymax = max(data$Volume_c2_BLACK_OPIUM), fill = 'lightblue') +
+                     annotate("rect", xmin = 	data$Date[70], xmax =  data$Date[71], alpha = .2, ymin = 0, ymax = max(data$Volume_c2_BLACK_OPIUM), fill = 'lightblue') +
+                     annotate("rect", xmin = 	data$Date[123], xmax =  data$Date[124], alpha = .2, ymin = 0, ymax = max(data$Volume_c2_BLACK_OPIUM), fill = 'lightblue') +
+                     annotate("rect", xmin = 	data$Date[37], xmax =  data$Date[38], alpha = .2, ymin = 0, ymax = max(data$Volume_c2_BLACK_OPIUM), fill = 'orange') +
+                     annotate("rect", xmin = 	data$Date[89], xmax =  data$Date[90], alpha = .2, ymin = 0, ymax = max(data$Volume_c2_BLACK_OPIUM), fill = 'orange') +
+                     scale_y_continuous(sec.axis = sec_axis(trans= ~./normalizer, name = 'Investment')) +
+                     theme_few() + labs(y = "Sales Quanity", title = "c2 Black Opium") + 
+                     theme(legend.position='none',axis.text.x = element_text(angle = 90, hjust = 1), plot.title = element_text(hjust = 0.5)) +
+                     scale_x_date(date_labels= "%b %y", date_breaks  ="1 month") +  theme(axis.title.x=element_blank())
+
+# Exporting graphs for clean up
+#ggsave("plot.pdf", p.c2_black_opium, height = 5, width = 9.6, dpi = 600)
+
+# c2 Black Opium
+# Resizing secondary bars
+normalizer  <- 0.06 
+# Plot
+p.c3_la_vie_est_belle <- ggplot(data, aes(y= Volume_c3_LA_VIE_EST_BELLE, x = Date)) + geom_line() + 
+                              geom_col(aes(x = Date, y = Investment_c3_LA_VIE_EST_BELLE*normalizer), fill = "black", alpha =0.6) +
+                              annotate("rect", xmin = 	data$Date[6], xmax =  data$Date[7], alpha = .2, ymin = 0, ymax = max(data$Volume_c3_LA_VIE_EST_BELLE), fill = 'red') +
+                              annotate("rect", xmin = 	data$Date[58], xmax =  data$Date[59], alpha = .2, ymin = 0, ymax = max(data$Volume_c3_LA_VIE_EST_BELLE), fill = 'red') +
+                              annotate("rect", xmin = 	data$Date[110], xmax =  data$Date[111], alpha = .2, ymin = 0, ymax = max(data$Volume_c3_LA_VIE_EST_BELLE), fill = 'red') +
+                              annotate("rect", xmin = 	data$Date[48], xmax =  data$Date[52], alpha = .2, ymin = 0, ymax = max(data$Volume_c3_LA_VIE_EST_BELLE), fill = 'green') +
+                              annotate("rect", xmin = 	data$Date[100], xmax =  data$Date[104], alpha = .2, ymin = 0, ymax = max(data$Volume_c3_LA_VIE_EST_BELLE), fill = 'green') +
+                              annotate("rect", xmin = 	data$Date[18], xmax =  data$Date[19], alpha = .2, ymin = 0, ymax = max(data$Volume_c3_LA_VIE_EST_BELLE), fill = 'lightblue') +
+                              annotate("rect", xmin = 	data$Date[70], xmax =  data$Date[71], alpha = .2, ymin = 0, ymax = max(data$Volume_c3_LA_VIE_EST_BELLE), fill = 'lightblue') +
+                              annotate("rect", xmin = 	data$Date[123], xmax =  data$Date[124], alpha = .2, ymin = 0, ymax = max(data$Volume_c3_LA_VIE_EST_BELLE), fill = 'lightblue') +
+                              annotate("rect", xmin = 	data$Date[37], xmax =  data$Date[38], alpha = .2, ymin = 0, ymax = max(data$Volume_c3_LA_VIE_EST_BELLE), fill = 'orange') +
+                              annotate("rect", xmin = 	data$Date[89], xmax =  data$Date[90], alpha = .2, ymin = 0, ymax = max(data$Volume_c3_LA_VIE_EST_BELLE), fill = 'orange') +
+                              scale_y_continuous(sec.axis = sec_axis(trans= ~./normalizer, name = 'Investment')) +
+                              theme_few() + labs(y = "Sales Quanity", title = "c3 La Vie Est Belle") + 
+                              theme(legend.position='none',axis.text.x = element_text(angle = 90, hjust = 1), plot.title = element_text(hjust = 0.5)) +
+                              scale_x_date(date_labels= "%b %y", date_breaks  ="1 month") +  theme(axis.title.x=element_blank())
+
+# Exporting graphs for clean up
+#ggsave("plot.pdf", p.c3_la_vie_est_belle, height = 5, width = 9.6, dpi = 600)
+
+# Price graphs
+price.data <- data[,c('Date','Price_c1_SI', "Price_c2_BLACK_OPIUM", "Price_c3_LA_VIE_EST_BELLE")]
+price.data <- melt(price.data, id.vars = c("Date"))
+
+# Plot
+p.price.change <- ggplot(price.data, aes(y= value, x = Date)) + geom_line(aes(color = price.data$variable)) + 
+                     annotate("rect", xmin = 	data$Date[6], xmax =  data$Date[7], alpha = .2, ymin = min(price.data$value), ymax = max(price.data$value), fill = 'red') +
+                     annotate("rect", xmin = 	data$Date[58], xmax =  data$Date[59], alpha = .2, ymin = min(price.data$value), ymax = max(price.data$value), fill = 'red') +
+                     annotate("rect", xmin = 	data$Date[110], xmax =  data$Date[111], alpha = .2, ymin = min(price.data$value), ymax = max(price.data$value), fill = 'red') +
+                     annotate("rect", xmin = 	data$Date[48], xmax =  data$Date[52], alpha = .2, ymin = min(price.data$value), ymax = max(price.data$value), fill = 'green') +
+                     annotate("rect", xmin = 	data$Date[100], xmax =  data$Date[104], alpha = .2, ymin = min(price.data$value), ymax = max(price.data$value), fill = 'green') +
+                     annotate("rect", xmin = 	data$Date[18], xmax =  data$Date[19], alpha = .2, ymin = min(price.data$value), ymax = max(price.data$value), fill = 'lightblue') +
+                     annotate("rect", xmin = 	data$Date[70], xmax =  data$Date[71], alpha = .2, ymin = min(price.data$value), ymax = max(price.data$value), fill = 'lightblue') +
+                     annotate("rect", xmin = 	data$Date[123], xmax =  data$Date[124], alpha = .2, ymin = min(price.data$value), ymax = max(price.data$value), fill = 'lightblue') +
+                     annotate("rect", xmin = 	data$Date[37], xmax =  data$Date[38], alpha = .2, ymin = min(price.data$value), ymax = max(price.data$value), fill = 'orange') +
+                     annotate("rect", xmin = 	data$Date[89], xmax =  data$Date[90], alpha = .2, ymin = min(price.data$value), ymax = max(price.data$value), fill = 'orange') +
+                     theme_few() + labs(y = "Price", title = "Price Changes") + 
+                     theme(legend.position='none',axis.text.x = element_text(angle = 90, hjust = 1), plot.title = element_text(hjust = 0.5)) +
+                     scale_x_date(date_labels= "%b %y", date_breaks  ="1 month") +  theme(axis.title.x=element_blank()) + 
+                     scale_y_continuous(limits = c(min(price.data$value), max(price.data$value))) + theme(legend.position="top")
+
+# Exporting graphs for clean up
+# ggsave("plot.pdf", p.price.change, height = 5, width = 9.6, dpi = 600)
+
+# The plot above shows that the price always changes a lot during the main selling periods and thus it is a good idea to introduce interaction of price and main selling period
+```
+
+\pagebreak
+
+# Introduction
+
+This report uses 129 observations of some of the firms in the fragrance market in Italy to analyse the following research questions:\newline
+
+a) Assess the Price Sensitivity of Each "Focal" Brand
+b) Assess the Communication Impact for Each of the Focal Brands
+c) Assess the Competitive Effects
+d) Advice on Budget Allocation and Optimisation for the Rest of the Year 2017
+
+## The scope of Econometric Analysis
+
+IV along with OLS were applied for econometric analysis. IV has been used to overcome the issue of reverse causality which caused an endogeneity problem making identification of the price sensitivity and communication impact difficult. The graphs shown below illustrates this issue. We can see this for c1 Si; communication investment is high in periods of high sales quantity which raises a question of the direction of causality between communication expenditure and sales quantity. This pattern is observed for all the focal brands (for more information, please refer to Appendix B).
+
+```{r c1 plot time series,echo=FALSE, fig.cap="\\label{fig:figs}c1 Si Sales Quanity and Communication Investment along with Major Perfume Selling Periods in Italy", out.width= "90%", fig.align="center"}
+c1_si_plot_path <- "endogeniety_graphs/c1_si.png"
+include_graphics(c1_si_plot_path)
+
+# ![c1 Si Sales Quanity and Communication Investment along with Major Perfume Selling Periods in Italy](endogeniety_graphs\c1_si.pdf)
+```
+
+**Instrumental Variables**\newline
+
+Throughout this report, two instruments are used for communication expenditure of the respective focal brands.\newline
+
+a) Google trend data for the brand names of the fragrances. For instance, google trend data of "c1" was used as an instrument for the advertising expenditure on c1 Si.\newline
+
+b) "non_com_high_in" - a dummy variable indicating periods of moderate and high investments (> 299880) by non-competitors. Investment by non-competitors was calculated as shown below. Moreover, the histogram below shows there are only a few occasions when the investment for non-competitors is below the level indicated. This observation is the reason why the dummy variable uses this value to indicate periods of moderate and high investment. Other measures including the mean and median could have also been used. They give out similar results.
+
+$$ \textrm{Non Competitor Investment} = \textrm{Total Market Investment} - \textrm{Investment by Focal Brands} $$
+```{r A histogram plot,echo=FALSE, fig.cap="\\label{fig:figs}A Histogram Showing Cut-off used to create the IV variable", out.width= "90%", fig.align="center"}
+custom_hist_plot_path <- "graphs/custom_histogram.png"
+include_graphics(custom_hist_plot_path)
+
+
+# ggplot(data, aes(x = investment_non_competitors)) + geom_histogram() + theme_few() + labs(y = "Count", x = "Investment by Non-Competitors") + geom_vline(xintercept = 299880, color = "red", linetype = "dashed")+ scale_x_continuous(breaks = c(0 ,299880, 2000000, 4000000, 6000000))
+#pdf('plot1.pdf', height = 5)
+#dev.off()
+```
+
+Both of these two variables are likely to be correlated to the communication expenditure of each focal brand, and therefore is expected to satisfy the instrument relevance condition [@wooldridge_2013]. To evaluate the validity of these instrument variables the following three diagnostic tests were used:\newline
+
+a) Weak Instrument Test - This is an F-test on the instruments in the first stage. The null hypothesis is that instruments are weak (not relevant), so a rejection means that the instrument relevance condition is satisfied.\newline
+
+b) Wu-Hausman Test - This tests the consistency of the OLS estimates under the assumption that the IV is consistent. When we reject, it means OLS is not consistent, suggesting endogeneity is present.\newline
+
+c) Sargan Test -  This is a test of instrument exogeneity using overidentifying restrictions, called the J-statistic in Stock and Watson.
+ If the null is rejected, at least one of our instruments is invalid [@sundstrom_2016].\newline
+
+\pagebreak
+
+## Dataset
+
+Google trend data was added for the following keywords to create IV variables and control for the high seasonality in the dataset. 
+
+```{r google_trend_table output, echo=FALSE}
+google_trend_table <- data.frame(
+                                  "Keyword" = c("profumo", "c1_profumo", "c2_profumo", "c3_profumo", 
+                                                "c1_si", "c2_black_opium", "c3_la_vie_est_belle",
+                                                "c1", "c2", "c3"),
+                                  "Purpose" = c("Seasonality and Trend", "IV", "IV", "IV",
+                                                "Seasonality and Trend", "Seasonality and Trend", "Seasonality and Trend",
+                                                "IV", "IV", "IV")
+)
+
+# Output
+kable(google_trend_table, format = "latex", booktabs = T, longtable = T, caption = "Google Trend Data") %>% kable_styling(latex_options = c("striped","hold_position"))
+```
+
+The following filters were used to get the google trend data. These filters were applied to make the additional data as relevant to this dataset as possible.
+
+```{r google_trend_filter output, echo=FALSE}
+
+google_trend_filter <- data.frame(
+                                  "Region" = c("Italy"),
+                                  "Start Date (yyyy/mm/dd)" = as.Date(c("2015/01/04")),
+                                  "End Date (yyyy/mm/dd)" = as.Date(c("2017/06/18")),
+                                  "Category" = c("Beauty & Fitness")
+)
+colnames(google_trend_filter) <- c("Region", "Start Date (yyyy/mm/dd)", "End Date (yyyy/mm/dd)", "Category")
+
+kable(google_trend_filter, format = "latex", booktabs = T, caption = "Google Trend Data Filter") %>% kable_styling(latex_options = c("hold_position"))
+```
+
+Apart from the google trend data, the following variables were created to test out various hypothesis. 
+
+```{r additional_variables_table output, echo=FALSE}
+additional_variables_table <- data.frame(
+                                        "Variable" = c("main_selling_period", "lag_volume_c1_si", "lag_volume_c2_black_opium",
+                                                       "lag_volume_c3_la_vie_est_belle", "investment_non_competitors", 
+                                                       "non_com_high_in", "value_focal", "ar.mrkt.share", "c2.mrkt.share",
+                                                       "lan.mrkt.share", "ar.mrkt.share.lag", "c2.mrkt.share.lag", "lan.mrkt.share.lag"),
+                                        "Purpose" = c("Controlling for Christmas, Mother's Day, Valentine's and Frangraze Fair",
+                                                      "Control Variable - Time Series",
+                                                      "Control Variable - Time Series",
+                                                      "Control Variable - Time Series",
+                                                      "IV",
+                                                      "IV",
+                                                      "To Compute Competitive Effects",
+                                                      "To Compute Competitive Effects",
+                                                      "To Compute Competitive Effects",
+                                                      "To Compute Competitive Effects",
+                                                      "Control Variable - Time Series",
+                                                      "Control Variable - Time Series",
+                                                      "Control Variable - Time Series")
+)
+
+kable(additional_variables_table, format = "latex", booktabs = T, longtable = T, caption = "Additional Variables Added to the Dataset") %>% kable_styling(latex_options = c("striped", "hold_position"), font_size = 8)
+```
+
+\pagebreak
+
+## Limitations and Further Research
+
+The primary limitation of this dataset is that there is incomplete information for firms that are not considered as "focal". Because of variability in the number of observations available for different firms, this research was only able to analyse the three focal brands. Another limitation of this data is the limited sample size. The limited sample size restricts the number of variables that can be entered in the regression equation. Due to this restriction, the subset selection method uses Bayesian Information Criterion (BIC) as it's information criterion since it penalises model complexity more than AIC. For some models, however, Adjusted R-square was used to avoid removing the variable of interest from the regression equation. \newline
+
+Further research can make use of Vector autoregression models to identify and solve the primary objectives of this research. This report avoids using them due to its restricted scope.
+
+\pagebreak
+
+# Analysis
+
+## Price Sensitivity of Each "Focal" Brand
+
+Before beginning the analysis, the stationarity of volume time series for each of the three "focal brand" was evaluated. The results of the tests are shown below:
+
+```{r Unit Root Test, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+ts.c1.si <- ts((data$Volume_c1_SI), frequency = 52, start = c(15, 1))
+ts.c2 <- ts((data$Volume_c2_BLACK_OPIUM), frequency = 52, start = c(15, 1))
+ts.c3 <- ts((data$Volume_c3_LA_VIE_EST_BELLE), frequency = 52, start = c(15, 1))
+
+# Staionarity test
+# c1 Si
+ar.adf <- adf.test(ts.c1.si)
+# Rejected the null that the sereis contain a unit root in favour of stationarity
+ar.pp <- pp.test(ts.c1.si)
+# Rejected the null that the sereis contain a unit root in favour of stationarity
+ar.kpss <- kpss.test(ts.c1.si)
+# Fail to reject the null that the proces is STATIONARY
+# Stationary
+
+# c2
+c2.adf <- adf.test(ts.c2)
+# Too conservative
+c2.pp <- pp.test(ts.c2)
+# Rejected the null that the sereis contain a unit root in favour of stationarity
+c2.kpss <- kpss.test(ts.c2)
+# Fail to reject the null that the proces is STATIONARY
+# Stationary
+
+# c3
+lan.adf <- adf.test(ts.c3)
+# Too conservative
+lan.pp <- pp.test(ts.c3)
+# Rejected the null that the sereis contain a unit root in favour of stationarity
+lan.kpss <- kpss.test(ts.c3)
+# Fail to reject the null that the proces is STATIONARY
+# Stationary
+```
+
+```{r Stationairty Test Output, echo=FALSE}
+# Output
+stationarity_test_table <- data.frame(
+                                      "Fragrance" = c("c1 Si", "c2 Black Opium", "c3 La Vie Est Belle"),
+                                      "ADF" = c(ar.adf$p.value, c2.adf$p.value, lan.adf$p.value),
+                                      "PP" = c(ar.pp$p.value, c2.pp$p.value, lan.pp$p.value),
+                                      "KPSS" = c(ar.kpss$p.value, c2.kpss$p.value, lan.kpss$p.value),
+                                      "Conclusion" = "Stationary")
+
+colnames(stationarity_test_table) <- c("Fragrance", "ADF", "PP", "KPSS", "Conclusion")
+
+names(stationarity_test_table)[2] <- paste0(names(stationarity_test_table)[2], footnote_marker_symbol(1, "latex"))
+names(stationarity_test_table)[3] <- paste0(names(stationarity_test_table)[3], footnote_marker_symbol(2, "latex"))
+names(stationarity_test_table)[4] <- paste0(names(stationarity_test_table)[4], footnote_marker_symbol(3, "latex"))
+
+kable(stationarity_test_table, format = "latex", booktabs = T, caption = "Stationarity Test Results (P-Value) for Sales Quantity", escape = F) %>% kable_styling(latex_options = c("striped", "hold_position")) %>% footnote(symbol = c("Unit Root; ", "Unit Root; ", "Stationary; "), symbol_title = "Null Hypothesis", footnote_as_chunk = T)
+```
+
+The results show that using a lag variable of these series won't be problematic since all three series are stationary.\newline
+
+The analysis of price sensitivity is divided into two sections: Own Price Elasticity and Cross Price Elasticity. This division was made to test the various hypothesis without losing a lot of degrees of freedom.
+
+### Own Price Elasticity (OPE)
+
+The regression models for this section can be found in Appendix A. The main result, i.e. the OPE has been summarised in the table below:
+
+```{r Simple Linear Models - Own Price Elasticity, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+# c1 Si Own Price Elasticity Computation
+# slm.ar.q1 <- regsubsets(log(Volume_c1_SI) ~ `Week Number` + main_selling_period +
+#                        log(Price_c1_SI)*main_selling_period +
+#                        Investment_c1_SI +
+#                        profumo + log(lag_volume_c1_si),
+#                        data = data,nbest = 1, nvmax = 6)
+
+# plot(slm.ar.q1, scale = "adjr2")
+
+slm.ar.q1 <- lm(log(Volume_c1_SI) ~ `Week Number` + main_selling_period +
+                       log(Price_c1_SI)*main_selling_period +
+                       I(Investment_c1_SI/10000) + 
+                       profumo + log(lag_volume_c1_si),
+                       data = data)
+
+# Robust Standard Errors
+slm.ar.q1.vcov.robust <- vcovHC(slm.ar.q1, "HC1")
+slm.ar.q1.robust_se    <- sqrt(diag(slm.ar.q1.vcov.robust))
+
+# ggplot(slm.ar.q1, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+
+# summary(slm.ar.q1)
+
+# c2 Black Opium Own Price Elasticity Computation
+# slm.c2.q1 <- regsubsets(log(Volume_c2_BLACK_OPIUM) ~ `Week Number` + main_selling_period +
+#                           log(Price_c2_BLACK_OPIUM)*main_selling_period +
+#                           Investment_c2_BLACK_OPIUM +
+#                           profumo + log(lag_volume_c2_black_opium),
+#                           data = data, nbest = 1, nvmax = 6)
+
+# plot(slm.c2.q1, scale = "adjr2")
+
+slm.c2.q1 <- lm(log(Volume_c2_BLACK_OPIUM) ~ `Week Number` + main_selling_period +
+                          log(Price_c2_BLACK_OPIUM)*main_selling_period +
+                          I(Investment_c2_BLACK_OPIUM/10000) +
+                          profumo + log(lag_volume_c2_black_opium),
+                          data = data)
+
+# Robust Standard Errors
+slm.c2.q1.vcov.robust <- vcovHC(slm.c2.q1, "HC1")
+slm.c2.q1.robust_se    <- sqrt(diag(slm.c2.q1.vcov.robust))
+
+# ggplot(slm.c2.q1, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+
+# summary(slm.c2.q1)
+
+# c3 Own Price Compuation
+# slm.lan.q1 <- regsubsets(log(Volume_c3_LA_VIE_EST_BELLE) ~ `Week Number` + main_selling_period +
+#                  log(Price_c3_LA_VIE_EST_BELLE) +
+#                  Investment_c3_LA_VIE_EST_BELLE +
+#                  profumo + log(lag_volume_c3_la_vie_est_belle),
+#                  data = data, nbest = 1, nvmax = 6)
+
+# plot(slm.lan.q1, scale = "adjr2")
+
+slm.lan.q1 <- lm(log(Volume_c3_LA_VIE_EST_BELLE) ~ `Week Number` + main_selling_period +
+                 log(Price_c3_LA_VIE_EST_BELLE)*main_selling_period +
+                 I(Investment_c3_LA_VIE_EST_BELLE/10000) + 
+                 profumo + log(lag_volume_c3_la_vie_est_belle),
+                 data = data)
+
+# Robust Standard Errors
+slm.lan.q1.vcov.robust <- vcovHC(slm.lan.q1, "HC1")
+slm.lan.q1.robust_se    <- sqrt(diag(slm.lan.q1.vcov.robust))
+
+# ggplot(slm.lan.q1, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+
+# summary(slm.lan.q1)
+```
+
+```{r Own Price Elasticity Table, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+own_price_elasticity_table <- data.frame(
+                                        "Fragrance" = c("c1 Si", "c2 Black Opium", "c3 La Vie Est Belle"),
+                                        "OPE" = c(round(slm.ar.q1$coefficients[4],2), round(slm.c2.q1$coefficients[4],2), round(slm.lan.q1$coefficients[4],2)),
+                                        "Change in OPE during Main Selling Period" = c(0,0, round(slm.lan.q1$coefficients[8],2))
+)
+colnames(own_price_elasticity_table) <- c("Fragrance", "OPE", "Peak Period OPE")
+rownames(own_price_elasticity_table) <- c()
+```
+
+```{r IV Price sensitivity Own, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+# c1 Si
+iv.c1.si <- ivreg(log(Volume_c1_SI) ~ `Week Number` +
+                            log(Price_c1_SI)*main_selling_period +
+                            I(Investment_c1_SI/10000) + 
+                            profumo + log(lag_volume_c1_si)
+                            | c1 +  non_com_high_in +
+                            `Week Number` +
+                            log(Price_c1_SI)*main_selling_period +
+                            profumo + log(lag_volume_c1_si), 
+                            x = TRUE, data = data)
+
+iv.c1.si.summary <- summary(iv.c1.si, vcov = sandwich, diagnostics = TRUE)
+iv.c1.si.summary <- data.frame(iv.c1.si.summary$diagnostics)
+iv.c1.si.summary <- iv.c1.si.summary$p.value
+
+# Robust Standard Errors
+iv.c1.si.vcov.robust <- vcovHC(iv.c1.si, "HC1")
+iv.c1.si.robust_se    <- sqrt(diag(iv.c1.si.vcov.robust))
+
+# c2 Black Opium
+iv.c2.black.opium <- ivreg(log(Volume_c2_BLACK_OPIUM) ~ `Week Number` +
+                            log(Price_c2_BLACK_OPIUM)*main_selling_period +
+                            I(Investment_c2_BLACK_OPIUM/10000) + 
+                            profumo + log(lag_volume_c2_black_opium)
+                            | c2 +  non_com_high_in +
+                            `Week Number` +
+                            log(Price_c2_BLACK_OPIUM)*main_selling_period +
+                            profumo + log(lag_volume_c2_black_opium), 
+                            x = TRUE, data = data)
+
+iv.c2.black.opium.summary <- summary(iv.c2.black.opium, vcov = sandwich, diagnostics = TRUE)
+iv.c2.black.opium.summary <- data.frame(iv.c2.black.opium.summary$diagnostics)
+iv.c2.black.opium.summary <- iv.c2.black.opium.summary$p.value
+
+# Robust Standard Errors
+iv.c2.black.opium.vcov.robust <- vcovHC(iv.c2.black.opium, "HC1")
+iv.c2.black.opium.robust_se    <- sqrt(diag(iv.c2.black.opium.vcov.robust))
+
+# c3
+iv.lan <- ivreg(log(Volume_c3_LA_VIE_EST_BELLE) ~ `Week Number` +
+                            log(Price_c3_LA_VIE_EST_BELLE)*main_selling_period +
+                            I(Investment_c3_LA_VIE_EST_BELLE/10000) + 
+                            profumo + log(lag_volume_c3_la_vie_est_belle)
+                            | c3 +  non_com_high_in +
+                            `Week Number` +
+                            log(Price_c3_LA_VIE_EST_BELLE)*main_selling_period +
+                            profumo + log(lag_volume_c3_la_vie_est_belle), 
+                            x = TRUE, data = data)
+
+iv.lan.summary <- summary(iv.lan, vcov = sandwich, diagnostics = TRUE)
+iv.lan.summary <- data.frame(iv.lan.summary$diagnostics)
+iv.lan.summary <- iv.lan.summary$p.value
+
+# Robust Standard Errors
+iv.lan.vcov.robust <- vcovHC(iv.lan, "HC1")
+iv.lan.robust_se    <- sqrt(diag(iv.lan.vcov.robust))
+```
+
+```{r Own Price Elasticity Table for IV Regression, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+own_price_elasticity_table_iv <- data.frame(
+                                        "Fragrance" = c("c1 Si", "c2 Black Opium", "c3 La Vie Est Belle"),
+                                        "OPE" = c(round(iv.c1.si$coefficients[3],2), round(iv.c2.black.opium$coefficients[3],2), 0),
+                                        "Change in OPE during Main Selling Period" = c(0,0, round(iv.lan$coefficients[8],2))
+)
+colnames(own_price_elasticity_table_iv) <- c("Fragrance", "OPE", "Peak Period OPE")
+rownames(own_price_elasticity_table_iv) <- c()
+```
+
+```{r Price Elasticity Linear Reg V/s Reg using IV output, echo=FALSE}
+price_elasticity_summary <- cbind(own_price_elasticity_table, own_price_elasticity_table_iv[,2:3])
+
+kable(price_elasticity_summary, format = "latex", booktabs = T, caption = "Own Price Elasticity Summary") %>% kable_styling(latex_options = c("striped", "hold_position")) %>% add_header_above(c(" ","OLS" = 2, "IV" = 2))
+```
+
+We can observe from this that all three fragrances have elasticities that can be classified as elastic. In regular periods, c2 had the most elastic OPE compared to the other two fragrances. However, this was not the case in peak periods as c3 had the most elastic OPE which was significantly different from c3's OPE in regular periods.\newline
+
+Before moving on to the IV results, the table below shows the results of the diagnostic test conducted to access the validity of using IV. The table shows that both instruments satisfy the relevance condition and there is indeed an issue of endogeneity in case of c1 and c2. The Saragan Test is also satisfactory here.
+
+```{r Summary of IV Diagonalistic Test Output, echo=FALSE}
+iv_diagonistic_test_p_value_table <- data.frame(
+                                                 "Fragrance" = c("c1 Si", "c2 Black Opium", "c3 La Vie Est Belle"),
+                                                 "Weak Instrument Test" = c(iv.c1.si.summary[1],iv.c2.black.opium.summary[1],iv.lan.summary[1]),
+                                                 "Wu-Hausman Test" = c(iv.c1.si.summary[2],iv.c2.black.opium.summary[2],iv.lan.summary[2]),
+                                                 "Sargan Test" = c(iv.c1.si.summary[3],iv.c2.black.opium.summary[3],iv.lan.summary[3])
+)
+colnames(iv_diagonistic_test_p_value_table) <- c("Fragrance", "Weak Instrument Test", "Wu-Hausman Test", "Sargan Test")
+
+# kable(iv_diagonistic_test_p_value_table, format = "latex", booktabs = T, caption = "IV Regression Model's Diagnostics (P-Value) for OPE") %>% kable_styling(latex_options = c("striped", "hold_position"))
+
+names(iv_diagonistic_test_p_value_table)[2] <- paste0(names(iv_diagonistic_test_p_value_table)[2], footnote_marker_symbol(1, "latex"))
+names(iv_diagonistic_test_p_value_table)[3] <- paste0(names(iv_diagonistic_test_p_value_table)[3], footnote_marker_symbol(2, "latex"))
+names(iv_diagonistic_test_p_value_table)[4] <- paste0(names(iv_diagonistic_test_p_value_table)[4], footnote_marker_symbol(3, "latex"))
+
+kable(iv_diagonistic_test_p_value_table, format = "latex", booktabs = T, caption = "IV Regression Model's Diagnostics (P-Value) for OPE", escape = F) %>% kable_styling(latex_options = c("striped", "hold_position")) %>% footnote(symbol = c("Instruments not Relevant; ", "OLS is consistent; ", "Instruments are valid; "), symbol_title = "Null Hypothesis", footnote_as_chunk = T)
+```
+
+The results were somewhat similar in regression models which used OLS. A major change was that c3's OPE was not statistically different from zero which suggest that c3's customers were not responsive to the price changes of c3's fragrance in regular periods. This finding needs to be evaluated with caution as this can be caused by the limited sample size of the dataset.
+
+### Cross Price Elasticity (CPE)
+
+In this section, various functional forms and regression models were computed to obtain valid estimates of the CPE which have sensible "face" value. The elasticity matrix below shows the main findings from the regression models (for more information, please refer to Appendix A Table 22: OLS (Cross Price Elasticity)). 
+
+```{r Simple Linear Models - Cross Price Elasticity, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+# # Raw Models
+# # c1 Si Own Price Elasticity Computation
+# slm.ar.q1.2.raw <- lm(Volume_c1_SI ~  main_selling_period +
+#                        log(Price_c1_SI) + log(Price_c2_BLACK_OPIUM) + log(Price_c3_LA_VIE_EST_BELLE) +
+#                        profumo + lag_volume_c1_si,
+#                        data = data)
+# 
+# # Functional Form
+# ggplot(slm.ar.q1.2.raw , aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+# 
+# # c2 Black Opium Own Price Elasticity Computation
+# slm.c2.q1.2.raw <- lm(Volume_c2_BLACK_OPIUM ~ main_selling_period +
+#                           log(Price_c2_BLACK_OPIUM) + log(Price_c1_SI) + log(Price_c3_LA_VIE_EST_BELLE) +
+#                           profumo,
+#                           data = data)
+# 
+# ggplot(slm.c2.q1.2.raw, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+# 
+# summary(slm.c2.q1.2.raw)
+# 
+# # c3 Own Price Compuation
+# slm.lan.q1.2.raw <- lm(log(Volume_c3_LA_VIE_EST_BELLE) ~ main_selling_period +
+#                     Price_c2_BLACK_OPIUM + Price_c3_LA_VIE_EST_BELLE + Price_c1_SI +  
+#                     profumo,
+#                     data = data)
+# 
+# ggplot(slm.lan.q1.2.raw, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+# summary(slm.lan.q1.2.raw)
+
+
+# Refined Results
+
+# Mean Price changes
+# ar_px_mean_change     <- mean(na.omit(reg.data.ar$Price_c1_SI - Lag(reg.data.ar$Price_c1_SI)))
+# c2_px_mean_change    <- mean(na.omit(reg.data.ar$Price_c2_BLACK_OPIUM - Lag(reg.data.ar$Price_c2_BLACK_OPIUM)))
+# lan_px_mean_change <- mean(na.omit(reg.data.lan$Price_c3_LA_VIE_EST_BELLE - Lag(reg.data.lan$Price_c3_LA_VIE_EST_BELLE)))
+
+
+# c1 Si
+slm.ar.q1.2           <- lm(Volume_c1_SI ~  main_selling_period + 
+                            log(Price_c1_SI)*main_selling_period + log(Price_c2_BLACK_OPIUM)*main_selling_period + 
+                            profumo + lag_volume_c1_si,
+                            data = data)
+
+# Robust Standard Errors
+slm.ar.q1.2.vcov.robust <- vcovHC(slm.ar.q1.2, "HC1")
+slm.ar.q1.2.robust_se    <- sqrt(diag(slm.ar.q1.2.vcov.robust))
+
+# ggplot(slm.ar.q1.2, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+# summary(slm.ar.q1.2)
+
+
+# c2 Black Opium Cross Price Elasticity Computation
+slm.c2.q1.2 <- lm(Volume_c2_BLACK_OPIUM ~ main_selling_period + 
+                          log(Price_c2_BLACK_OPIUM) +
+                          profumo,
+                          data = data)
+
+# Robust Standard Errors
+slm.c2.q1.2.vcov.robust <- vcovHC(slm.c2.q1.2, "HC1")
+slm.c2.q1.2.robust_se    <- sqrt(diag(slm.c2.q1.2.vcov.robust))
+
+# ggplot(slm.c2.q1.2, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+# summary(slm.c2.q1.2)
+
+# c3 Cross Price Compuation
+slm.lan.q1.2 <- lm(log(Volume_c3_LA_VIE_EST_BELLE) ~ 
+                    Price_c1_SI +
+                    Price_c3_LA_VIE_EST_BELLE +
+                    profumo,
+                    data = data)
+
+# Robust Standard Errors
+slm.lan.q1.2.vcov.robust <- vcovHC(slm.lan.q1.2, "HC1")
+slm.lan.q1.2.robust_se    <- sqrt(diag(slm.lan.q1.2.vcov.robust))
+
+
+# ggplot(slm.lan.q1.2, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+# summary(slm.lan.q1.2)
+
+# Summary of the results
+# stargazer(slm.ar.q1.2, slm.c2.q1.2, slm.lan.q1.2, type = "text")
+
+# Number of observation used are different and therefore we cannot compare the models!
+# This is because we use lag variable only for c1 Si and this is the case because
+# lag variable is not significant for the other two brands!
+
+
+# Elasticity
+# c1
+# c1 Own Price Elasticity
+predict0 <- slm.ar.q1.2$fitted.values
+data.sim <- data
+data.sim$Price_c1_SI <- data$Price_c1_SI*1.1
+predict1 <- na.omit(predict(slm.ar.q1.2,data.sim))
+
+ar.ope <- mean( (predict1 - predict0) / predict0) / .1
+
+# c2 Black Opium Cross Price Elasticity
+predict0 <- slm.ar.q1.2$fitted.values
+data.sim <- data
+data.sim$Price_c2_BLACK_OPIUM <- data$Price_c2_BLACK_OPIUM*1.1
+predict1 <- na.omit(predict(slm.ar.q1.2,data.sim))
+
+ar.c2.cpe <- mean( (predict1 - predict0) / predict0) / .1
+
+# c2
+# c2 Own Price Elasticity
+predict0 <- slm.c2.q1.2$fitted.values
+data.sim <- data
+data.sim$Price_c2_BLACK_OPIUM <- data$Price_c2_BLACK_OPIUM*1.1
+predict1 <- na.omit(predict(slm.c2.q1.2,data.sim))
+
+c2.ope <- mean( (predict1 - predict0) / predict0) / .1
+
+# c3
+# c3's Own Price Elasticity
+predict0 <- slm.lan.q1.2$fitted.values
+data.sim <- data
+data.sim$Price_c3_LA_VIE_EST_BELLE <- data$Price_c3_LA_VIE_EST_BELLE*1.1
+predict1 <- na.omit(predict(slm.lan.q1.2,data.sim))
+
+lan.ope <- mean( (predict1 - predict0) / predict0) / .1
+
+# c1 Cross Price Elasticity
+predict0 <- slm.lan.q1.2$fitted.values
+data.sim <- data
+data.sim$Price_c1_SI <- data$Price_c1_SI*1.1
+predict1 <- na.omit(predict(slm.lan.q1.2,data.sim))
+
+lan.ar.cpe <- mean( (predict1 - predict0) / predict0) / .1
+
+
+
+# Elasticity Matrix
+elasticity_matrix <- data.frame(
+                                "c1" = c(ar.ope,ar.c2.cpe,0),
+                                "c2" = c(0, c2.ope, 0),
+                                "c3" = c(lan.ar.cpe,0,lan.ope)
+)
+rownames(elasticity_matrix) <- c("c1", "c2", "c3")
+
+# Clout and Vulnerability Map
+c.n.p.map <- data.frame(
+                        "Clout" = c(ar.c2.cpe, 0, lan.ar.cpe),
+                        "Vulnerability" = c(lan.ar.cpe, ar.c2.cpe, 0),
+                        "Market Value" = c(mean(data$Value_c1_SI/data$value_focal), mean(data$Value_c2_BLACK_OPIUM/data$value_focal), 
+                                           mean(data$Value_c3_LA_VIE_EST_BELLE/data$value_focal))
+)
+rownames(c.n.p.map) <- c('c1', 'c2', 'c3')
+
+# Plot
+p.cnp <- ggplot(c.n.p.map, aes(y = Clout, x = Vulnerability, label = rownames(c.n.p.map))) + geom_point(aes(size = c.n.p.map$Market.Value)) + 
+         theme_few() + theme(legend.position='none') + geom_text()
+
+# pdf('plot1.pdf', height = 5)
+# ggplot(c.n.p.map, aes(y = Clout, x = Vulnerability, label = rownames(c.n.p.map))) + geom_point(aes(size = c.n.p.map$Market.Value)) + 
+#          theme_few() + theme(legend.position='none') + geom_text()
+# dev.off()
+```
+
+```{r Elasticity Matrix Output, echo=FALSE}
+kable(elasticity_matrix, format = "latex", booktabs = T, caption = "Cross Price Elasticity Matrix") %>% kable_styling(latex_options = c("striped", "hold_position"))
+```
+
+It is interesting to note that c1's and c2's OPE is increased and has become more elastic. On the other hand, c3's OPE is inelastic in this more complex model.\newline
+
+The Clout and Vulnerability Map below shows the competitive structure of the Italian fragrance market. Here the size of the bubble is encoded to the relative sales of the three fragrances. This graph shows the relative strength of the "c1" brand. 
+
+```{r Clout and Vulnerability Map Output,echo=FALSE, fig.cap="\\label{fig:figs}Clout and Vulnerability Map for c1, c2 and c3", out.width= "85%", fig.align="center"}
+clout_plot_path <- "graphs/clout_n_vul_map.png"
+include_graphics(clout_plot_path)
+
+# ![Clout and Vulnerability Map for c1, c2 and c3](graphs\clout_n_vul_map.pdf)
+```
+
+
+Coming over to IV, the diagnostic test show that the IV models are not suitable for the analysis. Also, the Wu-Hausman indicate that OLS is consistent. Therefore IV results are not used for this section.
+
+```{r IV Price sensitivity Cross, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+# c1 Si
+iv.c1.si.c <- ivreg(Volume_c1_SI ~ I(Investment_c1_SI/10000) + main_selling_period +                                           
+                            log(Price_c1_SI) + log(Price_c2_BLACK_OPIUM) + log(Price_c3_LA_VIE_EST_BELLE) +
+                            profumo +
+                            lag_volume_c1_si
+                            | c1 + non_com_high_in +
+                            main_selling_period +
+                            log(Price_c1_SI) + log(Price_c2_BLACK_OPIUM) + log(Price_c3_LA_VIE_EST_BELLE) +
+                            profumo+
+                            lag_volume_c1_si, 
+                            x = TRUE, data = data)
+
+# robust.se(iv.c1.si)
+
+iv.c1.si.summary.c <- summary(iv.c1.si.c, vcov = sandwich, diagnostics = TRUE)
+iv.c1.si.summary.c <- data.frame(iv.c1.si.summary.c$diagnostics)
+iv.c1.si.summary.c <- iv.c1.si.summary.c$p.value
+
+# c2 Black Opium
+iv.c2.black.opium.c <- ivreg(Volume_c2_BLACK_OPIUM ~ I(Investment_c2_BLACK_OPIUM/10000) + main_selling_period +                                           
+                            log(Price_c2_BLACK_OPIUM) +
+                            profumo
+                            | c2 +  non_com_high_in +
+                            main_selling_period +
+                            log(Price_c2_BLACK_OPIUM) +
+                            profumo, 
+                            x = TRUE, data = data)
+
+# robust.se(iv.c2.black.opium)
+
+iv.c2.black.opium.summary.c <- summary(iv.c2.black.opium.c, vcov = sandwich, diagnostics = TRUE)
+iv.c2.black.opium.summary.c <- data.frame(iv.c2.black.opium.summary.c$diagnostics)
+iv.c2.black.opium.summary.c <- iv.c2.black.opium.summary.c$p.value
+
+# c3
+iv.lan.c <- ivreg(log(Volume_c3_LA_VIE_EST_BELLE) ~ I(Investment_c3_LA_VIE_EST_BELLE/10000) +                                      
+                            Price_c3_LA_VIE_EST_BELLE + Price_c1_SI +
+                            profumo
+                            | c3 +  non_com_high_in +
+                            Price_c3_LA_VIE_EST_BELLE + Price_c1_SI +
+                            profumo, 
+                            x = TRUE, data = data)
+
+# robust.se(iv.lan)
+
+iv.lan.summary.c <- summary(iv.lan.c, vcov = sandwich, diagnostics = TRUE)
+iv.lan.summary.c <- data.frame(iv.lan.summary.c$diagnostics)
+iv.lan.summary.c <- iv.lan.summary.c$p.value
+
+# Not able to identify cross price elasticities here. 
+# The model didn't show the cross prices as significant or it showed negative values for price elasticity.
+```
+
+```{r IV diagonistic Test for Cross Price Elasiticity,echo=FALSE}
+iv_diagonistic_test_p_value_table_cross <- data.frame(
+                                                 "Fragrance" = c("c1 Si", "c2 Black Opium", "c3 La Vie Est Belle"),
+                                                 "Weak Instrument Test" = c(iv.c1.si.summary.c[1],iv.c2.black.opium.summary.c[1],iv.lan.summary.c[1]),
+                                                 "Wu-Hausman Test" = c(iv.c1.si.summary.c[2],iv.c2.black.opium.summary.c[2],iv.lan.summary.c[2]),
+                                                 "Sargan Test" = c(iv.c1.si.summary.c[3],iv.c2.black.opium.summary.c[3],iv.lan.summary.c[3])
+)
+colnames(iv_diagonistic_test_p_value_table_cross) <- c("Fragrance", "Weak Instrument Test", "Wu-Hausman Test", "Sargan Test")
+
+# kable(iv_diagonistic_test_p_value_table_cross, format = "latex", booktabs = T, caption = "IV Regression Model's Diagnostics (P-Value) for CPE") %>% kable_styling(latex_options = c("striped", "hold_position"))
+
+names(iv_diagonistic_test_p_value_table_cross)[2] <- paste0(names(iv_diagonistic_test_p_value_table_cross)[2], footnote_marker_symbol(1, "latex"))
+names(iv_diagonistic_test_p_value_table_cross)[3] <- paste0(names(iv_diagonistic_test_p_value_table_cross)[3], footnote_marker_symbol(2, "latex"))
+names(iv_diagonistic_test_p_value_table_cross)[4] <- paste0(names(iv_diagonistic_test_p_value_table_cross)[4], footnote_marker_symbol(3, "latex"))
+
+kable(iv_diagonistic_test_p_value_table_cross, format = "latex", booktabs = T, caption = "IV Regression Model's Diagnostics (P-Value) for CPE", escape = F) %>% kable_styling(latex_options = c("striped", "hold_position")) %>% footnote(symbol = c("Instruments not Relevant; ", "OLS is consistent; ", "Instruments are valid; "), symbol_title = "Null Hypothesis", footnote_as_chunk = T)
+```
+
+## Communication Impact for Each of the Focal Brands
+
+This section separates the analyses into Own Communication Impact and Cross Communication Impact.
+
+### Own Communication Impact
+
+The condensed regression output below shows that the return from communication expenditure for c1 and c3 follows a diminishing pattern (evident from the negative and significant impact of Investment Sqr variables) (for more information, please refer to Appendix A Table 23: OLS (Own Communication Impact)). Further, the return from c2's investment is higher in main selling periods (almost significant at 10% level when using normal standard errors).
+
+```{r Communication Impact Self, include=FALSE}
+# Com data
+c.data <- data[2:129,]
+
+# c1 Si
+ar.q2         <- lm(log(Volume_c1_SI) ~ profumo + I(Investment_c1_SI/10000) +
+                            main_selling_period + 
+                            I((Investment_c1_SI/10000)^2) +
+                            I(Investment_c1_SI/10000)*main_selling_period +
+                            log(Price_c1_SI) +
+                            log(lag_volume_c1_si),
+                            data = data)
+
+# n <- nrow(c.data)
+# ar.q2.null <- lm(log(Volume_c1_SI) ~ 1, data= c.data)
+# ar.q2.both <- step(ar.q2.null, scope = list(lower = ar.q2.null, upper = ar.q2), direction = "both", k = log(n))
+# # Functional form
+# ggplot(ar.q2.both, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+# # High collinearity
+# vif(ar.q2.both)
+
+# Robust Standard Errors
+ar.q2.vcov.robust <- vcovHC(ar.q2 , "HC1")
+ar.q2.robust_se    <- sqrt(diag(ar.q2.vcov.robust))
+
+
+
+# c2
+c2.q2         <- lm(log(Volume_c2_BLACK_OPIUM) ~ I(Investment_c2_BLACK_OPIUM/10000)*main_selling_period +
+                            I((Investment_c2_BLACK_OPIUM/10000)^2) +
+                            log(Price_c2_BLACK_OPIUM) +
+                            profumo + 
+                            log(lag_volume_c2_black_opium),
+                            data = c.data)
+
+# c2.q2.null <- lm(log(Volume_c2_BLACK_OPIUM) ~ 1, data= c.data)
+# c2.q2.both <- step(c2.q2.null, scope = list(lower = c2.q2.null, upper = c2.q2), direction = "both", k = log(n))
+# # Functional form
+# ggplot(c2.q2.both, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+# # High collinearity
+# vif(c2.q2.both)
+
+# Robust Standard Errors
+c2.q2.vcov.robust <- vcovHC(c2.q2, "HC1")
+c2.q2.robust_se    <- sqrt(diag(c2.q2.vcov.robust))
+
+
+
+
+# c3
+lan.q2         <- lm(log(Volume_c3_LA_VIE_EST_BELLE) ~ I(Investment_c3_LA_VIE_EST_BELLE/10000)*main_selling_period +
+                            I((Investment_c3_LA_VIE_EST_BELLE/10000)^2) + 
+                            log(Price_c3_LA_VIE_EST_BELLE) +
+                            profumo + 
+                            log(lag_volume_c3_la_vie_est_belle) ,
+                            data = data)
+
+# lan.q2.null <- lm(log(Volume_c3_LA_VIE_EST_BELLE) ~ 1, data= c.data)
+# lan.q2.both <- step(lan.q2.null, scope = list(lower = lan.q2.null, upper = lan.q2), direction = "both", k = log(n))
+# # Functional form
+# ggplot(lan.q2.both, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+# # High collinearity
+# vif(lan.q2.both)
+
+# Robust Standard Errors
+lan.q2.vcov.robust <- vcovHC(lan.q2, "HC1")
+lan.q2.robust_se    <- sqrt(diag(lan.q2.vcov.robust))
+
+
+
+# Elasticities
+# c1 Si
+# c1 Own Advertising Elasticity
+predict0 <- ar.q2$fitted.values
+data.sim <- c.data
+data.sim$Investment_c1_SI <- c.data$Investment_c1_SI*1.1
+predict1 <- na.omit(predict(ar.q2,data.sim))
+
+ar.ad.elasticity <- mean( (predict1 - predict0) / predict0) / .1
+
+# c1 long term elasticity computation
+data.sim <- c.data
+period.num <- 10
+m <- matrix(0, ncol = length(data.sim$Investment_c1_SI) - period.num, nrow = period.num)
+collect1 <- data.frame(m)
+j <- 1
+for (i in seq(1,length(data.sim$Investment_c1_SI) - period.num)){
+  data.sim$Investment_c1_SI[i] <- data.sim$Investment_c1_SI[i]*(1.1)
+  predict0 <- ar.q2$fitted.values[i:length(data.sim$Investment_c1_SI)]
+  predict1 <- na.omit(predict(ar.q2,data.sim[i:length(data.sim$Investment_c1_SI),]))
+  percentage_change_full <- (predict1 - predict0) / predict0
+  percentage_change_needed <- percentage_change_full[1:period.num]
+  collect1[j] <- percentage_change_needed
+  j <- j + 1
+}
+
+ar.ad.elasticity.long <- rowMeans(collect1)
+ar.ad.elasticity.long <- cumsum(ar.ad.elasticity.long)
+ar.ad.elasticity.long <- ar.ad.elasticity.long/.1
+period <- 1:period.num
+# plot(period, c2.ad.elasticity.long)
+ar.ad.elasticity.long <- ar.ad.elasticity.long[period.num]/.1
+
+# c2
+# c2 Own Advertising Elasticity
+predict0 <- c2.q2$fitted.values
+data.sim <- c.data
+data.sim$Investment_c2_BLACK_OPIUM <- c.data$Investment_c2_BLACK_OPIUM*(1.1)
+predict1 <- na.omit(predict(c2.q2,data.sim))
+
+c2.ad.elasticity.short <- mean( (predict1 - predict0) / predict0) / .1
+
+# c2 long term elasticity computation
+data.sim <- c.data
+period.num <- 10
+m <- matrix(0, ncol = length(data.sim$Investment_c2_BLACK_OPIUM) - period.num, nrow = period.num)
+collect1 <- data.frame(m)
+j <- 1
+for (i in seq(1,length(data.sim$Investment_c2_BLACK_OPIUM) - period.num)){
+  data.sim$Investment_c2_BLACK_OPIUM[i] <- data.sim$Investment_c2_BLACK_OPIUM[i]*(1.1)
+  predict0 <- c2.q2$fitted.values[i:length(data.sim$Investment_c2_BLACK_OPIUM)]
+  predict1 <- na.omit(predict(c2.q2,data.sim[i:length(data.sim$Investment_c2_BLACK_OPIUM),]))
+  percentage_change_full <- (predict1 - predict0) / predict0
+  percentage_change_needed <- percentage_change_full[1:period.num]
+  collect1[j] <- percentage_change_needed
+  j <- j + 1
+}
+
+c2.ad.elasticity.long <- rowMeans(collect1)
+c2.ad.elasticity.long <- cumsum(c2.ad.elasticity.long)
+c2.ad.elasticity.long <- c2.ad.elasticity.long/.1
+period <- 1:period.num
+# plot(period, c2.ad.elasticity.long)
+c2.ad.elasticity.long <- c2.ad.elasticity.long[period.num]/.1
+
+
+# c3
+# c3 Own Advertising Elasticity
+predict0 <- lan.q2$fitted.values
+data.sim <- c.data
+data.sim$Investment_c3_LA_VIE_EST_BELLE <- c.data$Investment_c3_LA_VIE_EST_BELLE*(1.1)
+predict1 <- na.omit(predict(lan.q2,data.sim))
+
+lan.ad.elasticity <- mean( (predict1 - predict0) / predict0) / .1
+
+self.m.impact.table <- data.frame(
+                                  "Fragrance" = c("c1 Si", "c2 Black Opium", "c3 La Vie Est Belle"),
+                                  "Short Term Elasticity" = c(round(ar.ad.elasticity,4),round(c2.ad.elasticity.short,4),round(lan.ad.elasticity,4)),
+                                  "Long Term Elasticity" = c(round(ar.ad.elasticity.long,2),round(c2.ad.elasticity.long,2),"No Effect")
+)
+
+colnames(self.m.impact.table) <- c("Fragrance", "Short Term Elasticity", "Long Term Elasticity")
+
+# Long term elasticity computation if not possible for c3 and c1 since lag variable doesn't show up.
+# For c2 tried to compute the long term advertising elasticity. There is none!
+```
+
+```{r Self Communication Regression Models Output Condensed, echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE, results= 'asis', fig.align="center"}
+stargazer(ar.q2, c2.q2, lan.q2, 
+          type = "latex",
+          dep.var.labels = c("L c1 Sales Quanitity", "L c2 Sales Quanitity", "L c3 Sales Quanitity"),
+          omit.stat=c("LL","ser","f"),
+          no.space = T,
+          title = "OLS (Own Communication Impact) Condensed",
+          se = c(list(ar.q2.robust_se), list(c2.q2.robust_se), list(lan.q2.robust_se)),
+          font.size = "footnotesize",
+          header = F,
+          keep = c("\\Investment_c1_SI/10000\\b", "\\Investment_c2_BLACK_OPIUM/10000\\b", "\\Investment_c3_LA_VIE_EST_BELLE/10000\\b"),
+          covariate.labels=c("Investment c2 in 10000s", "Investment c3 in 10000s", "Investment c1 in 10000s",
+                             "Investment c2 in 10000s * Main Selling Period","Investment c3 in 10000s * Main Selling Period",
+                              "Investment c1 in 10000s Sqr", "Investment c1 in 10000s * Main Selling Period",
+                              "Investment c2 in 10000s Sqr", "Investment c3 in 10000s Sqr"),
+          table.placement = "H"
+)
+```
+
+Before summarising the elasticity results, a brief discussion of the methodology used to compute the long-term elasticities is presented.\newline
+
+Since a log-level function form is used, there is no direct way of computing the long-term elasticities; the long-term elasticity was computed by simulating a 10% increase in the communication spend. The rise in communication spend was simulated for a specific day, and the increase in sales was recorded for the next ten weeks. This procedure was carried out for all possible days and the impact for the next ten weeks was averaged.  This impact was accumulated, and the elasticity was calculated on the accumulated impact of 10 weeks.\newline
+
+```{r IV Self Communication Impact, include=FALSE}
+# c1 Si
+iv.c1.si.com.s <- ivreg(log(Volume_c1_SI) ~ profumo + I(Investment_c1_SI/10000) +
+                            main_selling_period + 
+                            log(Price_c1_SI) +
+                            log(lag_volume_c1_si) 
+                            | c1 +  non_com_high_in +
+                            main_selling_period +
+                            log(Price_c1_SI) +
+                            profumo +
+                            log(lag_volume_c1_si), 
+                            x = TRUE, data = data)
+
+# Robust Standard Errors
+iv.c1.si.com.s.vcov.robust <- vcovHC(iv.c1.si.com.s, "HC1")
+iv.c1.si.com.s.robust_se    <- sqrt(diag(iv.c1.si.com.s.vcov.robust))
+
+
+iv.c1.si.com.s.summary <- summary(iv.c1.si.com.s, vcov = sandwich, diagnostics = TRUE)
+iv.c1.si.com.s.summary <- data.frame(iv.c1.si.com.s.summary$diagnostics)
+iv.c1.si.com.s.summary <- iv.c1.si.com.s.summary$p.value
+
+
+# c2 Black Opium
+iv.c2.black.opium.com.s <- ivreg(log(Volume_c2_BLACK_OPIUM) ~ I(Investment_c2_BLACK_OPIUM/10000) +                                           
+                            log(Price_c2_BLACK_OPIUM) +
+                            profumo + 
+                            log(lag_volume_c2_black_opium)
+                            | c2 +  non_com_high_in +
+                            main_selling_period +
+                            log(Price_c2_BLACK_OPIUM) +
+                            profumo + 
+                            log(lag_volume_c2_black_opium), 
+                            x = TRUE, data = data)
+
+# Robust Standard Errors
+iv.c2.black.opium.com.s.vcov.robust <- vcovHC(iv.c2.black.opium.com.s, "HC1")
+iv.c2.black.opium.com.s.robust_se    <- sqrt(diag(iv.c2.black.opium.com.s.vcov.robust))
+
+
+iv.c2.black.opium.com.s.summary <- summary(iv.c2.black.opium.com.s, vcov = sandwich, diagnostics = TRUE)
+iv.c2.black.opium.com.s.summary <- data.frame(iv.c2.black.opium.com.s.summary$diagnostics)
+iv.c2.black.opium.com.s.summary <- iv.c2.black.opium.com.s.summary$p.value
+
+
+
+# c3
+iv.lan.com.s <- ivreg(log(Volume_c3_LA_VIE_EST_BELLE) ~ I(Investment_c3_LA_VIE_EST_BELLE/10000) +                                      
+                            log(Price_c3_LA_VIE_EST_BELLE) +
+                            profumo + main_selling_period +
+                            log(lag_volume_c3_la_vie_est_belle)  
+                            | c3 +  non_com_high_in +
+                            main_selling_period +
+                            log(Price_c3_LA_VIE_EST_BELLE) +
+                            profumo + 
+                            log(lag_volume_c3_la_vie_est_belle) , 
+                            x = TRUE, data = data)
+
+# Robust Standard Errors
+iv.lan.com.s.vcov.robust <- vcovHC(iv.lan.com.s, "HC1")
+iv.lan.com.s.robust_se    <- sqrt(diag(iv.lan.com.s.vcov.robust))
+
+
+iv.lan.com.s.summary <- summary(iv.lan.com.s, vcov = sandwich, diagnostics = TRUE)
+iv.lan.com.s.summary <- data.frame(iv.lan.com.s.summary$diagnostics)
+iv.lan.com.s.summary <- iv.lan.com.s.summary$p.value
+
+
+
+
+# Elasticities
+# c1 Si
+# c1 Own Advertising Elasticity
+predict0 <- iv.c1.si.com.s$fitted.values
+data.sim <- data
+data.sim$Investment_c1_SI <- data$Investment_c1_SI*1.1
+predict1 <- na.omit(predict(iv.c1.si.com.s,data.sim))
+
+ar.ad.elasticity.short.iv.com.s <- mean( (predict1 - predict0) / predict0) / .1
+
+# c1 long term elasticity computation
+data.sim <- data
+period.num <- 10
+m <- matrix(0, ncol = length(data.sim$Investment_c1_SI) - period.num, nrow = period.num)
+collect1 <- data.frame(m)
+j <- 1
+for (i in seq(1,length(data.sim$Investment_c1_SI) - period.num)){
+  data.sim$Investment_c1_SI[i] <- data.sim$Investment_c1_SI[i]*1.1
+  predict0 <- iv.c1.si.com.s$fitted.values[i:length(data.sim$Investment_c1_SI)]
+  predict1 <- na.omit(predict(iv.c1.si.com.s,data.sim[i:length(data.sim$Investment_c1_SI),]))
+  percentage_change_full <- (predict1 - predict0) / predict0
+  percentage_change_needed <- percentage_change_full[1:period.num]
+  collect1[j] <- percentage_change_needed
+  j <- j + 1
+}
+
+ar.ad.elasticity.long.iv.avg.effect.com.s <- rowMeans(collect1)
+ar.ad.elasticity.long.iv.cumsum.avg.effect.com.s <- cumsum(ar.ad.elasticity.long.iv.avg.effect.com.s)
+ar.ad.elasticity.long.iv.com.s <- ar.ad.elasticity.long.iv.cumsum.avg.effect.com.s[period.num]/.1
+# period <- 1:period.num
+# plot(period, ar.ad.elasticity.long.iv.avg.effect.com.s)
+
+# c2
+# c2 Own Advertising Elasticity
+predict0 <- iv.c2.black.opium.com.s$fitted.values
+data.sim <- data
+data.sim$Investment_c2_BLACK_OPIUM <- data$Investment_c2_BLACK_OPIUM*1.1
+predict1 <- na.omit(predict(iv.c2.black.opium.com.s,data.sim))
+
+c2.ad.elasticity.short.iv.com.s <- mean( (predict1 - predict0) / predict0) / .1
+
+# c2 long term elasticity computation
+data.sim <- data
+period.num <- 10
+m <- matrix(0, ncol = length(data.sim$Investment_c2_BLACK_OPIUM) - period.num, nrow = period.num)
+collect1 <- data.frame(m)
+j <- 1
+for (i in seq(1,length(data.sim$Investment_c2_BLACK_OPIUM) - period.num)){
+  data.sim$Investment_c2_BLACK_OPIUM[i] <- data.sim$Investment_c2_BLACK_OPIUM[i]*1.1
+  predict0 <- iv.c2.black.opium.com.s$fitted.values[i:length(data.sim$Investment_c2_BLACK_OPIUM)]
+  predict1 <- na.omit(predict(iv.c2.black.opium.com.s,data.sim[i:length(data.sim$Investment_c2_BLACK_OPIUM),]))
+  percentage_change_full <- (predict1 - predict0) / predict0
+  percentage_change_needed <- percentage_change_full[1:period.num]
+  collect1[j] <- percentage_change_needed
+  j <- j + 1
+}
+
+c2.ad.elasticity.long.iv.avg.effect.com.s <- rowMeans(collect1)
+c2.ad.elasticity.long.iv.cumsum.avg.effect.com.s <- cumsum(c2.ad.elasticity.long.iv.avg.effect.com.s)
+c2.ad.elasticity.long.iv.com.s <- c2.ad.elasticity.long.iv.cumsum.avg.effect.com.s[period.num]/.1
+# period <- 1:period.num
+# plot(period, c2.ad.elasticity.long.iv.avg.effect.com.s)
+
+# c3
+# c3 Own Advertising Elasticity
+predict0 <- iv.lan.com.s$fitted.values
+data.sim <- data
+data.sim$Investment_c3_LA_VIE_EST_BELLE <- data$Investment_c3_LA_VIE_EST_BELLE*1.1
+predict1 <- na.omit(predict(iv.lan.com.s,data.sim))
+
+lan.ad.elasticity.short.iv.com.s <- mean( (predict1 - predict0) / predict0) / .1
+
+# lan long term elasticity computation
+data.sim <- data
+period.num <- 10
+m <- matrix(0, ncol = length(data.sim$Investment_c3_LA_VIE_EST_BELLE) - period.num, nrow = period.num)
+collect1 <- data.frame(m)
+j <- 1
+for (i in seq(1,length(data.sim$Investment_c3_LA_VIE_EST_BELLE) - period.num)){
+  data.sim$Investment_c3_LA_VIE_EST_BELLE[i] <- data.sim$Investment_c3_LA_VIE_EST_BELLE[i]*1.1
+  predict0 <- iv.lan.com.s$fitted.values[i:length(data.sim$Investment_c3_LA_VIE_EST_BELLE)]
+  predict1 <- na.omit(predict(iv.lan.com.s,data.sim[i:length(data.sim$Investment_c3_LA_VIE_EST_BELLE),]))
+  percentage_change_full <- (predict1 - predict0) / predict0
+  percentage_change_needed <- percentage_change_full[1:period.num]
+  collect1[j] <- percentage_change_needed
+  j <- j + 1
+}
+
+lan.ad.elasticity.long.iv.avg.effect.com.s <- rowMeans(collect1)
+lan.ad.elasticity.long.iv.cumsum.avg.effect.com.s <- cumsum(lan.ad.elasticity.long.iv.avg.effect.com.s)
+lan.ad.elasticity.long.iv.com.s <- lan.ad.elasticity.long.iv.cumsum.avg.effect.com.s[period.num]/.1
+# period <- 1:period.num
+# plot(period, lan.ad.elasticity.long.iv.avg.effect.com.s)
+
+self.m.impact.table.iv.com.s <- data.frame(
+                                  "Fragrance" = c("c1 Si", "c2 Black Opium", "c3 La Vie Est Belle"),
+                                  "Short Term Elasticity" = c(round(ar.ad.elasticity.short.iv.com.s,4), round(c2.ad.elasticity.short.iv.com.s,4), 
+                                                              round(lan.ad.elasticity.short.iv.com.s,4)),
+                                  "Long Term Elasticity" = c(round(ar.ad.elasticity.long.iv.com.s,2) , round(c2.ad.elasticity.long.iv.com.s,2) , "No Effect")
+)
+
+colnames(self.m.impact.table.iv.com.s) <- c("Fragrance", "Short Term Elasticity", "Long Term Elasticity")
+```
+
+```{r Advertising Elasticity Summary Output, echo=FALSE}
+advert_elasticity_summary <- cbind(self.m.impact.table, self.m.impact.table.iv.com.s[,2:3])
+
+kable(advert_elasticity_summary, format = "latex", booktabs = T, caption = "Own Advertising Elasticity Summary") %>% kable_styling(latex_options = c("striped", "HOLD_position"), font_size = 8) %>% add_header_above(c(" ","OLS" = 2, "IV" = 2))
+```
+
+In general IV estimates are much higher compared to OLS estimates. This result can be due to the endogeneity problem in communication expenditure. According to the OLS estimates c3 is relatively the most responsive in short-term. However, in the long term, c1's communication is much more responsive. c3's lag variable was not statistically significant thus it does not have a long-term impact.\newline
+
+The following table shows the diagnostic test results for IV models. The results are satisfactory for c1 and c2. However, these results suggest that OLS is consistent for c3's regression model. This observation is also supported by a smaller difference in the two estimates compared to the estimates of the other two fragrances.\newline
+
+```{r Advertising Elasticity  IV Diagonsitic Test Output, echo=FALSE}
+iv_diagonistic_test_p_value_table.ad.elasticity <- data.frame(
+                                                 "Fragrance" = c("c1 Si", "c2 Black Opium", "c3 La Vie Est Belle"),
+                                                 "Weak Instrument Test" = c(iv.c1.si.com.s.summary[1],iv.c2.black.opium.com.s.summary[1],iv.lan.com.s.summary[1]),
+                                                 "Wu-Hausman Test" = c(iv.c1.si.com.s.summary[2],iv.c2.black.opium.com.s.summary[2],iv.lan.com.s.summary[2]),
+                                                 "Sargan Test" = c(iv.c1.si.com.s.summary[3],iv.c2.black.opium.com.s.summary[3],iv.lan.com.s.summary[3])
+)
+colnames(iv_diagonistic_test_p_value_table.ad.elasticity) <- c("Fragrance", "Weak Instrument Test", "Wu-Hausman Test", "Sargan Test")
+
+# kable(iv_diagonistic_test_p_value_table.ad.elasticity, format = "latex", booktabs = T, caption = "IV Regression Model's Diagnostics (P-Value) for Own Communication Impact") %>% kable_styling(latex_options = c("striped", "hold_position"))
+
+names(iv_diagonistic_test_p_value_table.ad.elasticity)[2] <- paste0(names(iv_diagonistic_test_p_value_table.ad.elasticity)[2], footnote_marker_symbol(1, "latex"))
+names(iv_diagonistic_test_p_value_table.ad.elasticity)[3] <- paste0(names(iv_diagonistic_test_p_value_table.ad.elasticity)[3], footnote_marker_symbol(2, "latex"))
+names(iv_diagonistic_test_p_value_table.ad.elasticity)[4] <- paste0(names(iv_diagonistic_test_p_value_table.ad.elasticity)[4], footnote_marker_symbol(3, "latex"))
+
+kable(iv_diagonistic_test_p_value_table.ad.elasticity, format = "latex", booktabs = T, caption = "IV Regression Model's Diagnostics (P-Value) for Own Communication Impact", escape = F) %>% kable_styling(latex_options = c("striped", "HOLD_position")) %>% footnote(symbol = c("Instruments not Relevant; ", "OLS is consistent; ", "Instruments are valid; "), symbol_title = "Null Hypothesis", footnote_as_chunk = T)
+```
+
+Coming over to the IV estimates for advertising elasticity, c2 is relatively the most elastic in both short as well as in the long-term. c3 still doesn't appear to have a long-term impact. For full regression results please refer to Appendix A Table 24: IV (Own Communication Impact).
+
+### Cross Communication Impact
+
+#### Investment Models
+
+\  
+
+The condensed regression output below shows the cross-communication impact of the three focal brands (for more information, please refer to Appendix A Table 25: OLS (Cross Communication Impact)). It is surprising to note that most of the significant cross-impact is positive. For instance, the table below suggests that a $100000 communication investment by c3 will not only increase c3's Sales by 7%, but it will also increase c1's Sales by 6%. This result can be explained by the use of "bundling" by the "focal" brands. It was indeed the case in 2015 that the fragrances by the focal brand were offered as a bundled purchase [@mortimer_2015].
+
+```{r Communication Impact Cross, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+# c1 Si
+# ar.q2.b.data <-  c.data[c('Volume_c1_SI', 'main_selling_period', 'Price_c1_SI', 'Price_c2_BLACK_OPIUM',
+#                                 'profumo', 'lag_volume_c1_si', 'Investment_c1_SI', 'Investment_c2_BLACK_OPIUM', 'Investment_c3_LA_VIE_EST_BELLE')]
+
+# ar.q2.b         <- lm(log(Volume_c1_SI) ~  main_selling_period +
+#                             log(Price_c1_SI) +
+#                             profumo + 
+#                             I(Investment_c1_SI/10000)*main_selling_period + I(Investment_c2_BLACK_OPIUM/10000) + I(Investment_c3_LA_VIE_EST_BELLE/10000) +
+#                             I(Investment_c1_SI/10000)*I(Investment_c2_BLACK_OPIUM/10000) + I(Investment_c1_SI/10000)*I(Investment_c3_LA_VIE_EST_BELLE/10000) +
+#                             I((Investment_c1_SI/10000)^2) +
+#                             log(lag_volume_c1_si),
+#                             data = c.data)
+# 
+# n <- nrow(c.data)
+# ar.q2.b.null <- lm(log(Volume_c1_SI) ~ 1, data= c.data)
+# ar.q2.b.both <- step(ar.q2.b.null, scope = list(lower = ar.q2.b.null, upper = ar.q2.b), direction = "both", k = log(n))
+
+ar.q2.b.both <- lm(log(Volume_c1_SI) ~  main_selling_period +
+                            log(Price_c1_SI) +
+                            profumo  + 
+                            I(Investment_c1_SI/10000) + I(Investment_c2_BLACK_OPIUM/10000) + I(Investment_c3_LA_VIE_EST_BELLE/10000) +
+                            log(lag_volume_c1_si),
+                            data = data)
+
+# # Functional form
+# ggplot(ar.q2.b.both, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+# # High collinearity
+# vif(ar.q2.b.both)
+# # Had to removce square variable as VIF was 14
+
+# Robust Standard Errors
+ar.q2.b.both.vcov.robust <- vcovHC(ar.q2.b.both, "HC1")
+ar.q2.b.both.robust_se    <- sqrt(diag(ar.q2.b.both.vcov.robust))
+
+# stargazer(ar.q2.b.both, type = "text",
+#           title = "Communication Impact for c1 Si (Cross)", header = FALSE,
+#           se        = list(robust_se),
+#           omit.stat = "f",digits = 4)
+
+# c2 Black opium
+# c2.q2.b.data <-  c.data[c('Volume_c2_BLACK_OPIUM', 'main_selling_period', 'Price_c2_BLACK_OPIUM',
+#                    'profumo', 'Investment_c2_BLACK_OPIUM', 'lag_volume_c2_black_opium', 'Investment_c3_LA_VIE_EST_BELLE',
+#                    'Investment_c1_SI')]
+
+# c2.q2.b         <- lm(log(Volume_c2_BLACK_OPIUM) ~  main_selling_period +
+#                             log(Price_c2_BLACK_OPIUM) +
+#                             profumo  + 
+#                             I(Investment_c1_SI/10000) + I(Investment_c2_BLACK_OPIUM/10000) + I(Investment_c3_LA_VIE_EST_BELLE/10000) +
+#                             I(Investment_c1_SI/10000)*I(Investment_c2_BLACK_OPIUM/10000) + I(Investment_c2_BLACK_OPIUM/10000)*I(Investment_c3_LA_VIE_EST_BELLE/10000) + 
+#                             I((Investment_c2_BLACK_OPIUM/10000)^2) + I((Investment_c2_BLACK_OPIUM/10000)*main_selling_period) +
+#                             log(lag_volume_c2_black_opium),
+#                             data = c.data)
+# 
+# c2.q2.b.null <- lm(log(Volume_c2_BLACK_OPIUM) ~ 1, data= c.data)
+# c2.q2.b.both <- step(c2.q2.b.null, scope = list(lower = c2.q2.b.null, upper = c2.q2.b), direction = "both", k = log(n))
+
+c2.q2.b.both <- lm(log(Volume_c2_BLACK_OPIUM) ~  main_selling_period +
+                            log(Price_c2_BLACK_OPIUM) +
+                            profumo  + 
+                            I(Investment_c1_SI/10000) + I(Investment_c2_BLACK_OPIUM/10000) + I(Investment_c3_LA_VIE_EST_BELLE/10000) +
+                            log(lag_volume_c2_black_opium),
+                            data = data)
+
+# # Functional form
+# ggplot(c2.q2.b.both, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+# # High collinearity
+# vif(c2.q2.b.both)
+
+# Robust Standard Errors
+c2.q2.b.both.vcov.robust <- vcovHC(c2.q2.b.both, "HC1")
+c2.q2.b.both.robust_se    <- sqrt(diag(c2.q2.b.both.vcov.robust))
+
+# stargazer(c2.q2.b.both, type = "text",
+#           title = "Communication Impact for c2 Black Opium (Cross)", header = FALSE,
+#           se        = list(robust_se),
+#           omit.stat = "f",digits = 4)
+
+
+# c3
+# lan.q2.b.data <- c.data[c('Volume_c3_LA_VIE_EST_BELLE', 'main_selling_period', 'Price_c3_LA_VIE_EST_BELLE',
+#                           'profumo', 'Investment_c3_LA_VIE_EST_BELLE', 'lag_volume_c3_la_vie_est_belle', 'Investment_c1_SI', 'Investment_c2_BLACK_OPIUM')]
+
+# lan.q2.b         <- lm(log(Volume_c3_LA_VIE_EST_BELLE) ~  main_selling_period +
+#                             log(Price_c3_LA_VIE_EST_BELLE) +
+#                             profumo  + 
+#                             I(Investment_c1_SI/10000) + I(Investment_c2_BLACK_OPIUM/10000) + I(Investment_c3_LA_VIE_EST_BELLE/10000) +
+#                             I(Investment_c3_LA_VIE_EST_BELLE/10000)*I(Investment_c2_BLACK_OPIUM/10000) +
+#                             I(Investment_c1_SI/10000)*I(Investment_c3_LA_VIE_EST_BELLE/10000) +
+#                             I((Investment_c3_LA_VIE_EST_BELLE/10000)^2) + I((Investment_c3_LA_VIE_EST_BELLE/10000)*main_selling_period) + 
+#                             log(lag_volume_c3_la_vie_est_belle),
+#                             data = c.data)
+# 
+# lan.q2.b.null <- lm(log(Volume_c3_LA_VIE_EST_BELLE) ~ 1, data= c.data)
+# lan.q2.b.both <- step(lan.q2.b.null, scope = list(lower = lan.q2.b.null, upper = lan.q2.b), direction = "both", k = log(n))
+
+lan.q2.b.both <- lm(log(Volume_c3_LA_VIE_EST_BELLE) ~  main_selling_period +
+                            log(Price_c3_LA_VIE_EST_BELLE) +
+                            profumo  + 
+                            I(Investment_c1_SI/10000) + I(Investment_c2_BLACK_OPIUM/10000) + I(Investment_c3_LA_VIE_EST_BELLE/10000) +
+                            log(lag_volume_c3_la_vie_est_belle),
+                            data = data)
+
+# # Functional form
+# ggplot(lan.q2.b.both, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+# # High collinearity
+# vif(lan.q2.b.both)
+
+# Robust Standard Errors
+lan.q2.b.both.vcov.robust <- vcovHC(lan.q2.b.both, "HC1")
+lan.q2.b.both.robust_se    <- sqrt(diag(lan.q2.b.both.vcov.robust))
+
+# stargazer(lan.q2.b.both, type = "text",
+#           title = "Communication Impact for c3 (Cross)", header = FALSE,
+#           se        = list(robust_se),
+#           omit.stat = "f",digits = 4)
+
+
+# Elaticity Short Term
+
+
+# c1 Advertising Elasticity
+
+# Own
+predict0 <- ar.q2.b.both$fitted.values
+data.sim <- data
+data.sim$Investment_c1_SI <- data$Investment_c1_SI*(1.1)
+predict1 <- na.omit(predict(ar.q2.b.both,data.sim))
+
+ar.ad.own.elasticity <- mean( (predict1 - predict0) / predict0) / .1
+
+# c1 c3 Cross
+data.sim <- data
+data.sim$Investment_c3_LA_VIE_EST_BELLE <- data$Investment_c3_LA_VIE_EST_BELLE*(1.1)
+predict1 <- na.omit(predict(ar.q2.b.both,data.sim))
+
+ar.lan.ad.cross.elasticity <- mean( (predict1 - predict0) / predict0) / .1
+
+# c1 c2 Cross
+data.sim <- data
+data.sim$Investment_c2_BLACK_OPIUM <- data$Investment_c2_BLACK_OPIUM*(1.1)
+predict1 <- na.omit(predict(ar.q2.b.both,data.sim))
+
+ar.c2.ad.cross.elasticity <- mean( (predict1 - predict0) / predict0) / .1
+
+
+# c2 Advertising Elasticity
+
+# Own
+predict0 <- c2.q2.b.both$fitted.values
+data.sim <- data
+data.sim$Investment_c2_BLACK_OPIUM <- data$Investment_c2_BLACK_OPIUM*(1.1)
+predict1 <- na.omit(predict(c2.q2.b.both,data.sim))
+
+c2.ad.own.elasticity <- mean( (predict1 - predict0) / predict0) / .1
+
+# c2 and c3 Cross
+data.sim <- data
+data.sim$Investment_c3_LA_VIE_EST_BELLE <- data$Investment_c3_LA_VIE_EST_BELLE*(1.1)
+predict1 <- na.omit(predict(c2.q2.b.both,data.sim))
+
+c2.lan.ad.cross.elasticity <- mean( (predict1 - predict0) / predict0) / .1
+
+
+# c3 Advertising Elasticity
+
+# Own
+predict0 <- lan.q2.b.both$fitted.values
+data.sim <- data
+data.sim$Investment_c3_LA_VIE_EST_BELLE <- data$Investment_c3_LA_VIE_EST_BELLE*1.1
+predict1 <- na.omit(predict(lan.q2.b.both,data.sim))
+
+lan.ad.own.elasticity <- mean( (predict1 - predict0) / predict0) / .1
+
+# c3 and c2 cross
+data.sim <- data
+data.sim$Investment_c2_BLACK_OPIUM <- data$Investment_c2_BLACK_OPIUM*1.1
+predict1 <- na.omit(predict(lan.q2.b.both,data.sim))
+
+lan.c2.ad.cross.elasticity <- mean( (predict1 - predict0) / predict0) / .1
+
+# c3 and c1 cross
+data.sim <- data
+data.sim$Investment_c1_SI <- data$Investment_c1_SI*1.1
+predict1 <- na.omit(predict(lan.q2.b.both,data.sim))
+
+lan.ar.ad.cross.elasticity <- mean( (predict1 - predict0) / predict0) / .1
+
+
+
+
+cross.elasticity.advertising.table <- data.frame(
+                                    "c1" = c(round(ar.ad.own.elasticity,4), "No Effect", round(ar.lan.ad.cross.elasticity,4)),
+                                    "c2" = c("No Effect", round(c2.ad.own.elasticity,4), round(c2.lan.ad.cross.elasticity,4)),
+                                    "c3" = c(round(lan.ar.ad.cross.elasticity,4), round(lan.c2.ad.cross.elasticity,4), round(lan.ad.own.elasticity,4))
+)
+
+rownames(cross.elasticity.advertising.table) <- c("c1", "c2", "c3")
+
+
+
+
+
+# Long Term Advertising Elasticity
+
+# c1 long term elasticity computation
+
+# Own
+
+data.sim <- data
+period.num <- 10
+m <- matrix(0, ncol = length(data.sim$Investment_c1_SI) - period.num, nrow = period.num)
+collect1 <- data.frame(m)
+j <- 1
+for (i in seq(1,(length(data.sim$Investment_c1_SI) - period.num))){
+  data.sim$Investment_c1_SI[i] <- data.sim$Investment_c1_SI[i]*1.1
+  predict0 <- ar.q2.b.both$fitted.values[i:length(data.sim$Investment_c1_SI)]
+  predict1 <- na.omit(predict(ar.q2.b.both,data.sim[i:length(data.sim$Investment_c1_SI),]))
+  percentage_change_full <- (predict1 - predict0) / predict0
+  percentage_change_needed <- percentage_change_full[1:period.num]
+  collect1[j] <- percentage_change_needed
+  j <- j + 1
+}
+
+c.ar.ad.elas.lavgeffect <- rowMeans(collect1)
+c.ar.ad.elas.lcumsumavgeffect <- cumsum(c.ar.ad.elas.lavgeffect)
+c.ar.ad.elas.l <- c.ar.ad.elas.lcumsumavgeffect[period.num]/.1
+
+# c1 c2 Cross
+
+data.sim <- data
+period.num <- 10
+m <- matrix(0, ncol = length(data.sim$Investment_c2_BLACK_OPIUM) - period.num, nrow = period.num)
+collect1 <- data.frame(m)
+j <- 1
+for (i in seq(1,(length(data.sim$Investment_c2_BLACK_OPIUM) - period.num))){
+  data.sim$Investment_c2_BLACK_OPIUM[i] <- data.sim$Investment_c2_BLACK_OPIUM[i]*1.1
+  predict0 <- ar.q2.b.both$fitted.values[i:length(data.sim$Investment_c2_BLACK_OPIUM)]
+  predict1 <- na.omit(predict(ar.q2.b.both,data.sim[i:length(data.sim$Investment_c2_BLACK_OPIUM),]))
+  percentage_change_full <- (predict1 - predict0) / predict0
+  percentage_change_needed <- percentage_change_full[1:period.num]
+  collect1[j] <- percentage_change_needed
+  j <- j + 1
+}
+
+c.ar.c2.ad.elas.lavgeffect <- rowMeans(collect1)
+c.ar.c2.ad.elas.lcumsumavgeffect <- cumsum(c.ar.c2.ad.elas.lavgeffect)
+c.ar.c2.ad.elas.l <- c.ar.c2.ad.elas.lcumsumavgeffect[period.num]/.1
+
+# c1 c3 Cross
+
+data.sim <- data
+period.num <- 10
+m <- matrix(0, ncol = length(data.sim$Investment_c3_LA_VIE_EST_BELLE) - period.num, nrow = period.num)
+collect1 <- data.frame(m)
+j <- 1
+for (i in seq(1,(length(data.sim$Investment_c3_LA_VIE_EST_BELLE) - period.num))){
+  data.sim$Investment_c3_LA_VIE_EST_BELLE[i] <- data.sim$Investment_c3_LA_VIE_EST_BELLE[i]*1.1
+  predict0 <- ar.q2.b.both$fitted.values[i:length(data.sim$Investment_c3_LA_VIE_EST_BELLE)]
+  predict1 <- na.omit(predict(ar.q2.b.both,data.sim[i:length(data.sim$Investment_c3_LA_VIE_EST_BELLE),]))
+  percentage_change_full <- (predict1 - predict0) / predict0
+  percentage_change_needed <- percentage_change_full[1:period.num]
+  collect1[j] <- percentage_change_needed
+  j <- j + 1
+}
+
+c.ar.lan.ad.elas.lavgeffect <- rowMeans(collect1)
+c.ar.lan.ad.elas.lcumsumavgeffect <- cumsum(c.ar.lan.ad.elas.lavgeffect)
+c.ar.lan.ad.elas.l <- c.ar.lan.ad.elas.lcumsumavgeffect[period.num]/.1
+
+
+# c2 long term elasticity computation
+
+# Own
+
+data.sim <- data
+period.num <- 10
+m <- matrix(0, ncol = length(data.sim$Investment_c2_BLACK_OPIUM) - period.num, nrow = period.num)
+collect1 <- data.frame(m)
+j <- 1
+for (i in seq(1,length(data.sim$Investment_c2_BLACK_OPIUM) - period.num)){
+  data.sim$Investment_c2_BLACK_OPIUM[i] <- data.sim$Investment_c2_BLACK_OPIUM[i]*1.1
+  predict0 <- c2.q2.b.both$fitted.values[i:length(data.sim$Investment_c2_BLACK_OPIUM)]
+  predict1 <- na.omit(predict(c2.q2.b.both,data.sim[i:length(data.sim$Investment_c2_BLACK_OPIUM),]))
+  percentage_change_full <- (predict1 - predict0) / predict0
+  percentage_change_needed <- percentage_change_full[1:period.num]
+  collect1[j] <- percentage_change_needed
+  j <- j + 1
+}
+
+c.c2.ad.elas.lavgeffect <- rowMeans(collect1)
+c.c2.ad.elas.lcumsumavgeffect <- cumsum(c.c2.ad.elas.lavgeffect)
+c.c2.ad.elas.l <- c.c2.ad.elas.lcumsumavgeffect[period.num]/.1
+
+# c2 and c3
+
+data.sim <- data
+period.num <- 10
+m <- matrix(0, ncol = length(data.sim$Investment_c3_LA_VIE_EST_BELLE) - period.num, nrow = period.num)
+collect1 <- data.frame(m)
+j <- 1
+for (i in seq(1,length(data.sim$Investment_c3_LA_VIE_EST_BELLE) - period.num)){
+  data.sim$Investment_c3_LA_VIE_EST_BELLE[i] <- data.sim$Investment_c3_LA_VIE_EST_BELLE[i]*1.1
+  predict0 <- c2.q2.b.both$fitted.values[i:length(data.sim$Investment_c3_LA_VIE_EST_BELLE)]
+  predict1 <- na.omit(predict(c2.q2.b.both,data.sim[i:length(data.sim$Investment_c3_LA_VIE_EST_BELLE),]))
+  percentage_change_full <- (predict1 - predict0) / predict0
+  percentage_change_needed <- percentage_change_full[1:period.num]
+  collect1[j] <- percentage_change_needed
+  j <- j + 1
+}
+
+c.c2.lan.ad.elas.lavgeffect <- rowMeans(collect1)
+c.c2.lan.ad.elas.lcumsumavgeffect <- cumsum(c.c2.lan.ad.elas.lavgeffect)
+c.c2.lan.ad.elas.l <- c.c2.lan.ad.elas.lcumsumavgeffect[period.num]/.1
+
+cross.long.elasticity.advertising.table <- data.frame(
+                                    "c1" = c(round(c.ar.ad.elas.l,3), "No Effect", round(c.ar.lan.ad.elas.l,3)),
+                                    "c2" = c("No Effect", round(c.c2.ad.elas.l,3), round(c.c2.lan.ad.elas.l,3)),
+                                    "c3" = c("No Effect", "No Effect", "No Effect")
+)
+
+rownames(cross.long.elasticity.advertising.table) <- c("c1", "c2", "c3")
+```
+
+```{r Cross Comunication Impact regression Output Condensed, echo=FALSE, results='asis', fig.align="center"}
+stargazer(ar.q2.b.both, c2.q2.b.both, lan.q2.b.both, 
+          type = "latex",
+          dep.var.labels = c("L c1 Sales Quanitity", "L c2 Sales Quanitity", "L c3 Sales Quanitity"),
+          omit.stat=c("LL","ser","f"),
+          no.space = T,
+          title = "OLS (Cross Communication Impact) Condensed",
+          se = c(list(ar.q2.b.both.robust_se), list(c2.q2.b.both.robust_se), list(lan.q2.b.both.robust_se)),
+          font.size = "small",
+          header = F,
+          keep = c("\\Investment_c1_SI/10000\\b", "\\Investment_c2_BLACK_OPIUM/10000\\b", "\\Investment_c3_LA_VIE_EST_BELLE/10000\\b"),
+          covariate.labels=c("Investment c1 in 10000s", "Investment c2 in 10000s", "Investment c3 in 10000s"),
+          table.placement = "H"
+)
+```
+
+Moving on to the advertising elasticities, the table below shows the elasticity matrix for both short and long-term. Since c3's lag variable was not significant, there is no long-term impact. It is interesting to see that the coss advertising elasticities are close to the own advertising elasticities. This result is a stronger suggestion of the bundling phenomenon at play.
+
+```{r Cross advert Elasticities Summary Output, echo=FALSE}
+cross_advert_elasticity_summary <- cbind(cross.elasticity.advertising.table,cross.long.elasticity.advertising.table)
+
+
+kable(cross_advert_elasticity_summary, format = "latex", booktabs = T, caption = "Cross Advertising Elasticity Matrix Summary") %>% kable_styling(latex_options = c("striped", "hold_position"), font_size = 8) %>% add_header_above(c(" ","Short Term" = 3, "Long Term" = 3))
+```
+
+IV regression models were also computed, but as shown below in the table, models for c1 and c3 failed to reject the consistency of OLS at 5% significance level. Further, most of the investment impacts were not identified while using IV which can be caused due to a high correlation between the instruments. This is the reason why IV models for this section were excluded from this report.
+
+```{r IV Cross Communication Impact, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+# c1 Si
+iv.ar.c.c <- ivreg(log(Volume_c1_SI) ~ I(Investment_c1_SI/10000) + I(Investment_c2_BLACK_OPIUM/10000) + I(Investment_c3_LA_VIE_EST_BELLE/10000) +
+                            log(Price_c1_SI) +
+                            profumo +
+                            main_selling_period +
+                            log(lag_volume_c1_si)
+                            | c1 +  non_com_high_in + c2 + c3 +
+                            log(Price_c1_SI) +
+                            profumo + 
+                            main_selling_period +
+                            log(lag_volume_c1_si), 
+                            x = TRUE, data = c.data)
+
+# robust.se(iv.c1.si.c)
+# summary(iv.c1.si.c, vcov = sandwich, diagnostics = TRUE)
+
+iv.ar.c.c.summary <- summary(iv.ar.c.c, vcov = sandwich, diagnostics = TRUE)
+iv.ar.c.c.summary <- data.frame(iv.ar.c.c.summary$diagnostics)
+iv.ar.c.c.summary <- iv.ar.c.c.summary$p.value
+
+
+# c2 Black Opium
+iv.c2.c.c <- ivreg(log(Volume_c2_BLACK_OPIUM) ~ 
+                            I(Investment_c1_SI/10000) + I(Investment_c2_BLACK_OPIUM/10000) + I(Investment_c3_LA_VIE_EST_BELLE/10000) +
+                            log(Price_c2_BLACK_OPIUM) +
+                            profumo +
+                            main_selling_period + 
+                            log(lag_volume_c2_black_opium)
+                            | c1 +  non_com_high_in + c2 + c3 +
+                            log(Price_c2_BLACK_OPIUM) +
+                            profumo + 
+                            main_selling_period + 
+                            log(lag_volume_c2_black_opium), 
+                            x = TRUE, data = c.data)
+
+# robust.se(iv.c2.black.opium.c)
+# summary(iv.c2.black.opium.c, vcov = sandwich, diagnostics = TRUE)
+
+iv.c2.c.c.summary <- summary(iv.c2.c.c, vcov = sandwich, diagnostics = TRUE)
+iv.c2.c.c.summary <- data.frame(iv.c2.c.c.summary$diagnostics)
+iv.c2.c.c.summary <- iv.c2.c.c.summary$p.value
+
+# c3
+iv.lan.c.c <- ivreg(log(Volume_c3_LA_VIE_EST_BELLE) ~ 
+                            I(Investment_c1_SI/10000) + I(Investment_c2_BLACK_OPIUM/10000) + I(Investment_c3_LA_VIE_EST_BELLE/10000) +
+                            log(Price_c3_LA_VIE_EST_BELLE) +
+                            profumo +
+                            main_selling_period + 
+                            log(lag_volume_c3_la_vie_est_belle) 
+                            | c1 +  non_com_high_in + c2 + c3 +
+                            main_selling_period +
+                            log(Price_c3_LA_VIE_EST_BELLE) +
+                            profumo + 
+                            log(lag_volume_c3_la_vie_est_belle) , 
+                            x = TRUE, data = c.data)
+
+# robust.se(iv.lan.c)
+# summary(iv.lan.c, vcov = sandwich, diagnostics = TRUE)
+
+iv.lan.c.c.summary <- summary(iv.lan.c.c, vcov = sandwich, diagnostics = TRUE)
+iv.lan.c.c.summary <- data.frame(iv.lan.c.c.summary$diagnostics)
+iv.lan.c.c.summary <- iv.lan.c.c.summary$p.value
+
+# # Elaticity
+# # c1 Own Advertising Elasticity
+# predict0 <- iv.c1.si.c$fitted.values
+# data.sim <- c.data
+# data.sim$Investment_c1_SI <- c.data$Investment_c1_SI*1.1
+# predict1 <- na.omit(predict(iv.c1.si.c,data.sim))
+# 
+# ar.ad.elasticity.iv.c <- mean( (predict1 - predict0) / predict0) / .1
+# 
+# # c2
+# # c2 Own Advertising Elasticity
+# predict0 <- iv.c2.black.opium.c$fitted.values
+# data.sim <- c.data
+# data.sim$Investment_c2_BLACK_OPIUM <- c.data$Investment_c2_BLACK_OPIUM*1.1
+# predict1 <- na.omit(predict(iv.c2.black.opium.c,data.sim))
+# 
+# c2.ad.elasticity.short.iv.c <- mean( (predict1 - predict0) / predict0) / .1
+# 
+# # c3 Advertising Elasticity
+# predict0 <- iv.lan.c$fitted.values
+# data.sim <- c.data
+# data.sim$Investment_c3_LA_VIE_EST_BELLE <- c.data$Investment_c3_LA_VIE_EST_BELLE*1.1
+# predict1 <- na.omit(predict(iv.lan.c,data.sim))
+# 
+# lan.ad.elasticity.iv.c <- mean( (predict1 - predict0) / predict0) / .1
+# 
+# cross.elasticity.table <- data.frame(
+#                                     "c1" = c(ar.ad.elasticity.iv.c, 0, 0),
+#                                     "c2" = c(0, c2.ad.elasticity.short.iv.c, 0),
+#                                     "c3" = c(0, 0, lan.ad.elasticity.iv.c)
+# )
+# 
+# rownames(cross.elasticity.table) <- c("c1", "c2", "c3")
+
+# Not able to identify cross impact of self investment for c1 and c2. Also suggests no endogenity problem for c3. Only investment that is significant is c3
+# Therefor IV not used for cross impact!
+```
+
+```{r Cross Communication IV Diagonsitic Test Output, echo=FALSE}
+iv_diagonistic_test_p_value_table.cc <- data.frame(
+                                                 "Fragrance" = c("c1 Si", "c2 Black Opium", "c3 La Vie Est Belle"),
+                                                 "Weak Test 1" = c(iv.ar.c.c.summary[1],iv.c2.c.c.summary[1],iv.lan.c.c.summary[1]),
+                                                 "Weak Test 2" = c(iv.ar.c.c.summary[2],iv.c2.c.c.summary[2],iv.lan.c.c.summary[2]),
+                                                 "Weak Test 3" = c(iv.ar.c.c.summary[3],iv.c2.c.c.summary[3],iv.lan.c.c.summary[3]),
+                                                 "Wu-Hausman Test" = c(iv.ar.c.c.summary[4],iv.c2.c.c.summary[4],iv.lan.c.c.summary[4]),
+                                                 "Sargan Test" = c(iv.ar.c.c.summary[5],iv.c2.c.c.summary[5],iv.lan.c.c.summary[5])                                               
+)
+colnames(iv_diagonistic_test_p_value_table.cc) <- c("Fragrance", "Weak Test 1", "Weak Test 2", "Weak Test 3", "Wu-Hausman Test", "Sargan Test")
+
+# kable(iv_diagonistic_test_p_value_table.cc, format = "latex", booktabs = T, caption = "IV Regression Model's Diagnostics (P-Value) for Cross Communication Impact") %>% kable_styling(latex_options = c("striped", "hold_position"))
+
+names(iv_diagonistic_test_p_value_table.cc)[2] <- paste0(names(iv_diagonistic_test_p_value_table.cc)[2], footnote_marker_symbol(1, "latex"))
+names(iv_diagonistic_test_p_value_table.cc)[3] <- paste0(names(iv_diagonistic_test_p_value_table.cc)[3], footnote_marker_symbol(1, "latex"))
+names(iv_diagonistic_test_p_value_table.cc)[4] <- paste0(names(iv_diagonistic_test_p_value_table.cc)[4], footnote_marker_symbol(1, "latex"))
+names(iv_diagonistic_test_p_value_table.cc)[5] <- paste0(names(iv_diagonistic_test_p_value_table.cc)[5], footnote_marker_symbol(2, "latex"))
+names(iv_diagonistic_test_p_value_table.cc)[6] <- paste0(names(iv_diagonistic_test_p_value_table.cc)[6], footnote_marker_symbol(3, "latex"))
+
+kable(iv_diagonistic_test_p_value_table.cc, format = "latex", booktabs = T, caption = "IV Regression Model's Diagnostics (P-Value) for Cross Communication Impact", escape = F) %>% kable_styling(latex_options = c("striped", "hold_position"), font_size = 8) %>% footnote(symbol = c("Instruments not Relevant; ", "OLS is consistent; ", "Instruments are valid; "), symbol_title = "Null Hypothesis", footnote_as_chunk = T)
+```
+
+#### Adstock Models
+
+\  
+
+Adstock for all the three fragrances was calculated. As shown below the optimised alpha for each of the fragrances was quite similar to each other.\newline
+
+```{r Adstock, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+# c1
+adstock.data.ar <- data[c('Week Number','Volume_c1_SI', 'Investment_c1_SI')]
+colnames(adstock.data.ar) <- c("Week", "Impact","Ads")
+
+adstock<-function(x,rate=0){
+return(as.numeric(stats::filter(x=x,filter=rate,method="recursive")))
+}
+
+best.i.ar <- 0
+best.rsqr <- 0
+range_i <- seq(0,1,.01)
+Ads <- adstock.data.ar$Ads
+
+rsqr <- numeric(length = length(range_i))
+t_stat <-numeric(length = length(range_i))
+
+j <- 1
+for(i in range_i){
+
+  adstock_l <- adstock(adstock.data.ar$Ads,rate=i)
+  data_frame <- as.data.frame(cbind(adstock_l, Ads, 
+                                    data$Volume_c1_SI,
+                                    data$main_selling_period,
+                                    data$Price_c1_SI, data$c1_si, 
+                                    data$lag_volume_c1_si,
+                                    data$Investment_c3_LA_VIE_EST_BELLE,
+                                    data$Investment_c2_BLACK_OPIUM,
+                                    data$Price_c2_BLACK_OPIUM, data$Price_c3_LA_VIE_EST_BELLE
+                                    ))
+  mod.loop <- lm(data_frame$V3~ + adstock_l 
+                  + data_frame$V4 + data_frame$V5 + data_frame$V6 + data_frame$V7 + data_frame$V8 + data_frame$V9
+                  , data = data_frame)
+  summary_model <- summary(mod.loop)
+  rsqr[j] <-  summary_model$adj.r.squared
+  t_stat[j] <- summary_model$coefficients[2,3]
+  if(rsqr[j] > best.rsqr){
+    best.rsqr <- rsqr[j]
+    best.i.ar <- i
+  }
+  j <- j+1
+}
+
+plot(range_i,rsqr)
+plot(range_i,t_stat)
+
+
+# c2
+adstock.data.c2 <- data[c('Week Number','Volume_c2_BLACK_OPIUM', 'Investment_c2_BLACK_OPIUM')]
+colnames(adstock.data.c2) <- c("Week", "Impact","Ads")
+
+best.i.c2 <- 0
+best.rsqr <- 0
+range_i <- seq(0,1,.01)
+Ads <- adstock.data.ar$Ads
+
+rsqr <- numeric(length = length(range_i))
+t_stat <-numeric(length = length(range_i))
+
+j <- 1
+for(i in range_i){
+
+  adstock_l <- adstock(adstock.data.ar$Ads,rate=i)
+  data_frame <- as.data.frame(cbind(adstock_l, Ads, 
+                                    data$Volume_c2_BLACK_OPIUM,
+                                    data$main_selling_period,
+                                    data$Price_c2_BLACK_OPIUM, data$c2_black_opium, 
+                                    data$lag_volume_c2_black_opium,
+                                    data$Investment_c3_LA_VIE_EST_BELLE,
+                                    data$Investment_c1_SI,
+                                    data$Price_c1_SI, data$Price_c3_LA_VIE_EST_BELLE))
+  mod.loop <- lm(data_frame$V3~ + adstock_l 
+                  + data_frame$V4 + data_frame$V5 + data_frame$V6 + data_frame$V7 + data_frame$V8 + data_frame$V9
+                  , data = data_frame)
+  summary_model <- summary(mod.loop)
+  rsqr[j] <-  summary_model$adj.r.squared
+  t_stat[j] <- summary_model$coefficients[2,3]
+  if(rsqr[j] > best.rsqr){
+    best.rsqr <- rsqr[j]
+    best.i.c2 <- i
+  }
+  j <- j+1
+}
+
+plot(range_i,rsqr)
+plot(range_i,t_stat)
+
+
+# c3
+adstock.data.lan <- data[c('Week Number','Volume_c3_LA_VIE_EST_BELLE', 'Investment_c3_LA_VIE_EST_BELLE')]
+colnames(adstock.data.lan) <- c("Week", "Impact","Ads")
+
+best.i.lan <- 0
+best.rsqr <- 0
+range_i <- seq(0,1,.01)
+Ads <- adstock.data.ar$Ads
+
+rsqr <- numeric(length = length(range_i))
+t_stat <-numeric(length = length(range_i))
+
+j <- 1
+for(i in range_i){
+
+  adstock_l <- adstock(adstock.data.lan$Ads,rate=i)
+  data_frame <- as.data.frame(cbind(adstock_l, 
+                                    Ads, 
+                                    data$Volume_c3_LA_VIE_EST_BELLE,
+                                    data$main_selling_period,
+                                    data$Price_c3_LA_VIE_EST_BELLE, 
+                                    data$c3_la_vie_est_belle, 
+                                    data$lag_volume_c3_la_vie_est_belle,
+                                    data$Investment_c2_BLACK_OPIUM,
+                                    data$Investment_c1_SI,
+                                    data$Price_c1_SI, data$Price_c3_LA_VIE_EST_BELLE
+                                    ))
+  mod.loop <- lm(data_frame$V3~ + adstock_l 
+                  + data_frame$V4 + data_frame$V5 + data_frame$V6 + data_frame$V7 + data_frame$V8 + data_frame$V9
+                  , data = data_frame)
+  summary_model <- summary(mod.loop)
+  rsqr[j] <-  summary_model$adj.r.squared
+  t_stat[j] <- summary_model$coefficients[2,3]
+  if(rsqr[j] > best.rsqr){
+    best.rsqr <- rsqr[j]
+    best.i.lan <- i
+  }
+  j <- j+1
+}
+
+plot(range_i,rsqr)
+plot(range_i,t_stat)
+
+# Alpha values for all three brands
+adstock.alpha.summary <- data.frame(
+                                    "Fragrance" = c("c1 Si", "c2 Black Opium", "c3 La Vie Est Belle"),
+                                    "Optimised Alpha" = c(best.i.ar, best.i.c2, best.i.lan)
+)
+
+# Adstock Variables didn't give interpretation which were different to the normal models and thus were excluded from this report.
+# T values for adstock variable is not really significant for full models
+# These two reasons results in excluding adstoock variable from this report.
+
+# Adding adstock variables in c.data
+c.data$ar.adstock <- adstock(data$Investment_c1_SI, rate = best.i.ar)[2:129]
+c.data$c2.adstock <- adstock(data$Investment_c2_BLACK_OPIUM, rate = best.i.c2)[2:129]
+c.data$lan.adstock <- adstock(data$Investment_c3_LA_VIE_EST_BELLE, rate = best.i.lan)[2:129]
+
+# Adding adstock in data
+data$ar.adstock <- adstock(data$Investment_c1_SI, rate = best.i.ar)
+data$c2.adstock <- adstock(data$Investment_c2_BLACK_OPIUM, rate = best.i.c2)
+data$lan.adstock <- adstock(data$Investment_c3_LA_VIE_EST_BELLE, rate = best.i.lan)
+```
+
+```{r Adstock Alpha summary output, echo=FALSE}
+kable(adstock.alpha.summary, format = "latex", booktabs = T, caption = "Adstock Alpha Values", escape = F) %>% kable_styling(latex_options = c("striped", "HOLD_position"))
+```
+
+```{r Adstock Models, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+# c1 Si
+# ar.q2.b.data.ad <-  c.data[c('Volume_c1_SI', 'main_selling_period', 'Price_c1_SI', 'Price_c2_BLACK_OPIUM',
+#                                 'profumo', 'lag_volume_c1_si', 'ar.adstock', 'c2.adstock', 'lan.adstock')]
+
+# ar_adstock_mean_change     <- (mean(na.omit(ar.q2.b.data.ad$ar.adstock - Lag(ar.q2.b.data.ad$ar.adstock))))/mean(ar.q2.b.data.ad$ar.adstock)
+
+ar.q2.b.ad         <- lm(log(Volume_c1_SI) ~  main_selling_period +
+                            log(Price_c1_SI) + 
+                            profumo + 
+                            I(ar.adstock/10000) + I(c2.adstock/10000) + I(lan.adstock/10000) +
+                            log(lag_volume_c1_si),
+                            data = data)
+
+# n <- nrow(ar.q2.b.data.ad)
+# ar.q2.b.null.ad <- lm(log(Volume_c1_SI) ~ 1, data= ar.q2.b.data.ad)
+# ar.q2.b.both.ad <- step(ar.q2.b.null.ad, scope = list(lower = ar.q2.b.null.ad, upper = ar.q2.b.ad), direction = "both", k = log(n))
+# # Functional form
+# ggplot(ar.q2.b.both.ad, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+# # High collinearity
+# vif(ar.q2.b.both.ad)
+# # Had to removce square variable as VIF was 14
+
+# Robust Standard Errors
+ar.q2.b.ad.vcov.robust <- vcovHC(ar.q2.b.ad, "HC1")
+ar.q2.b.ad.robust_se    <- sqrt(diag(ar.q2.b.ad.vcov.robust))
+
+# stargazer(ar.q2.b.ad, type = "text",
+#           title = "Communication Impact for c1 Si (Cross) Using Adstock Model", header = FALSE,
+#           se        = list(robust_se),
+#           omit.stat = "f",digits = 4)
+
+# c2 Black opium
+c2.q2.b.ad         <- lm(log(Volume_c2_BLACK_OPIUM) ~  main_selling_period +
+                            log(Price_c2_BLACK_OPIUM) +
+                            profumo  + 
+                            I(ar.adstock/10000) + I(c2.adstock/10000) + I(lan.adstock/10000) +
+                            log(lag_volume_c2_black_opium),
+                            data = data)
+
+# c2.q2.b.null.ad <- lm(log(Volume_c2_BLACK_OPIUM) ~ 1, data= c2.q2.b.data.ad)
+# c2.q2.b.both.ad <- step(c2.q2.b.null.ad, scope = list(lower = c2.q2.b.null.ad, upper = c2.q2.b.ad), direction = "both", k = log(n))
+# # Functional form
+# ggplot(c2.q2.b.both.ad, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+# # High collinearity
+# vif(c2.q2.b.both.ad)
+
+# Robust Standard Errors
+c2.q2.b.ad.vcov.robust <- vcovHC(c2.q2.b.ad, "HC1")
+c2.q2.b.ad.robust_se    <- sqrt(diag(c2.q2.b.ad.vcov.robust))
+
+# stargazer(c2.q2.b.ad, type = "text",
+#           title = "Communication Impact for c2 Black Opium (Cross)", header = FALSE,
+#           se        = list(robust_se),
+#           omit.stat = "f",digits = 4)
+
+
+# # c3
+# lan.q2.b.data.ad <- c.data[c('Volume_c3_LA_VIE_EST_BELLE', 'main_selling_period', 'Price_c3_LA_VIE_EST_BELLE',
+#                           'profumo', 'lan.adstock', 'lag_volume_c3_la_vie_est_belle', 'ar.adstock', 'c2.adstock')]
+
+lan.q2.b.ad         <- lm(log(Volume_c3_LA_VIE_EST_BELLE) ~  main_selling_period +
+                            log(Price_c3_LA_VIE_EST_BELLE) +
+                            profumo  + 
+                            I(ar.adstock/10000) + I(c2.adstock/10000) + I(lan.adstock/10000) +
+                            log(lag_volume_c3_la_vie_est_belle),
+                            data = data)
+
+# lan.q2.b.null.ad <- lm(log(Volume_c3_LA_VIE_EST_BELLE) ~ 1, data= lan.q2.b.data.ad)
+# lan.q2.b.both.ad <- step(lan.q2.b.null.ad, scope = list(lower = lan.q2.b.null.ad, upper = lan.q2.b.ad), direction = "both", k = log(n))
+# # Functional form
+# ggplot(lan.q2.b.both.ad, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+# # High collinearity
+# vif(lan.q2.b.both.ad)
+
+# Robust Standard Errors
+lan.q2.b.ad.vcov.robust <- vcovHC(lan.q2.b.ad, "HC1")
+lan.q2.b.ad.robust_se    <- sqrt(diag(lan.q2.b.ad.vcov.robust))
+
+# stargazer(lan.q2.b.ad, type = "text",
+#           title = "Communication Impact for c3 (Cross)", header = FALSE,
+#           se        = list(robust_se),
+#           omit.stat = "f",digits = 4)
+
+# Both adstock models and normal investment model face issue of endogeniety can thus are not able to uncover the effects. 
+# Since both had somewhat similar results. Investment variables will be used in IV and not adstock variables!
+```
+
+Further, the condensed regression output shows similar results obtained using investment models(for more information, please refer to Appendix A Table 26: OLS (Cross Communication Impact) using Adstock Models). The bundling effect is also consistent here since the cross-adstock impact is positive.\newline
+
+```{r Adstock Models regression Output Condensed, echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE, results= 'asis', fig.align="center"}
+stargazer(ar.q2.b.ad, c2.q2.b.ad, lan.q2.b.ad, 
+          type = "latex",
+          dep.var.labels = c("L c1 Sales Quanitity", "L c2 Sales Quanitity", "L c3 Sales Quanitity"),
+          omit.stat=c("LL","ser","f"),
+          no.space = T,
+          title = "OLS (Cross Communication Impact) using Adstock Models (Condensed)",
+          se = c(list(ar.q2.b.ad.robust_se), list(c2.q2.b.ad.robust_se), list(lan.q2.b.ad.robust_se)),
+          font.size = "small",
+          header = F,
+          keep = c("ar.adstock/10000", "\\c2.adstock/10000\\b", "\\lan.adstock/10000\\b"),
+          covariate.labels=c("Adstock c1 in 10000s", "Adstock c2 in 10000s", "Adstock c3 in 10000s"),
+          table.placement = "H"
+)
+```
+
+IV regression models were also computed using adstock, but they faced similar issues discussed in the previous section.
+
+```{r Adstock IV, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+# c1 Si
+iv.ar.c.c.a <- ivreg(log(Volume_c1_SI) ~ I(ar.adstock/10000) + I(c2.adstock/10000) + I(lan.adstock/10000) +
+                            log(Price_c1_SI) +
+                            profumo +
+                            main_selling_period +
+                            log(lag_volume_c1_si)
+                            | c1 +  non_com_high_in + c2 + c3 +
+                            log(Price_c1_SI) +
+                            profumo + 
+                            main_selling_period +
+                            log(lag_volume_c1_si), 
+                            x = TRUE, data = c.data)
+
+# robust.se(iv.c1.si.c)
+# summary(iv.c1.si.c, vcov = sandwich, diagnostics = TRUE)
+
+iv.ar.c.c.a.summary <- summary(iv.ar.c.c.a, vcov = sandwich, diagnostics = TRUE)
+iv.ar.c.c.a.summary <- data.frame(iv.ar.c.c.a.summary$diagnostics)
+iv.ar.c.c.a.summary <- iv.ar.c.c.a.summary$p.value
+
+
+# c2 Black Opium
+iv.c2.c.c.a <- ivreg(log(Volume_c2_BLACK_OPIUM) ~ 
+                            I(ar.adstock/10000) + I(c2.adstock/10000) + I(lan.adstock/10000) +
+                            log(Price_c2_BLACK_OPIUM) +
+                            profumo +
+                            main_selling_period + 
+                            log(lag_volume_c2_black_opium)
+                            | c1 +  non_com_high_in + c2 + c3 +
+                            log(Price_c2_BLACK_OPIUM) +
+                            profumo + 
+                            main_selling_period + 
+                            log(lag_volume_c2_black_opium), 
+                            x = TRUE, data = c.data)
+
+# robust.se(iv.c2.black.opium.c)
+# summary(iv.c2.black.opium.c, vcov = sandwich, diagnostics = TRUE)
+
+iv.c2.c.c.a.summary <- summary(iv.c2.c.c.a, vcov = sandwich, diagnostics = TRUE)
+iv.c2.c.c.a.summary <- data.frame(iv.c2.c.c.a.summary$diagnostics)
+iv.c2.c.c.a.summary <- iv.c2.c.c.a.summary$p.value
+
+# c3
+iv.lan.c.c.a <- ivreg(log(Volume_c3_LA_VIE_EST_BELLE) ~ 
+                            I(ar.adstock/10000) + I(c2.adstock/10000) + I(lan.adstock/10000) +
+                            log(Price_c3_LA_VIE_EST_BELLE) +
+                            profumo +
+                            main_selling_period + 
+                            log(lag_volume_c3_la_vie_est_belle) 
+                            | c1 +  non_com_high_in + c2 + c3 +
+                            main_selling_period +
+                            log(Price_c3_LA_VIE_EST_BELLE) +
+                            profumo + 
+                            log(lag_volume_c3_la_vie_est_belle) , 
+                            x = TRUE, data = c.data)
+
+# robust.se(iv.lan.c)
+# summary(iv.lan.c, vcov = sandwich, diagnostics = TRUE)
+
+iv.lan.c.c.a.summary <- summary(iv.lan.c.c.a, vcov = sandwich, diagnostics = TRUE)
+iv.lan.c.c.a.summary <- data.frame(iv.lan.c.c.a.summary$diagnostics)
+iv.lan.c.c.a.summary <- iv.lan.c.c.a.summary$p.value
+
+# Exactly same poor results as obtained by IV before in cross communication impact therefore IV models not used here as well.
+```
+
+##  Competitive Effects
+
+ A metric similar to market share was calculated to assess the competitive effects. The difference is that the size of the market here was the total sales of the three focal brands. This change was made as data on aggregate market value was not able for all the periods.\newline
+
+Further to this, the table below shows the stationarity test p-values for the time series of the relative size of the focal brands. We can see that the time series is stationary and thus we can use its lag variable in our models.
+
+```{r Stationarity test for market share, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+ts.ar.ms <- ts((data$ar.mrkt.share), frequency = 52, start = c(15, 1))
+ts.c2.ms <- ts((data$c2.mrkt.share), frequency = 52, start = c(15, 1))
+ts.lan.ms <- ts((data$lan.mrkt.share), frequency = 52, start = c(15, 1))
+
+# Staionarity test
+# c1 Si
+ar.ms.adf <- adf.test(ts.ar.ms)
+# Rejected the null that the sereis contain a unit root in favour of stationarity
+ar.ms.pp <- pp.test(ts.ar.ms)
+# Rejected the null that the sereis contain a unit root in favour of stationarity
+ar.ms.kpss <- kpss.test(ts.ar.ms)
+# Fail to reject the null that the proces is STATIONARY
+# Stationary
+
+# c2
+c2.ms.adf <- adf.test(ts.c2.ms)
+# Too conservative
+c2.ms.pp <- pp.test(ts.c2.ms)
+# Rejected the null that the sereis contain a unit root in favour of stationarity
+c2.ms.kpss <- kpss.test(ts.c2.ms)
+# Fail to reject the null that the proces is STATIONARY
+# Stationary
+
+# c3
+lan.ms.adf <- adf.test(ts.lan.ms)
+# Too conservative
+lan.ms.pp <- pp.test(ts.lan.ms)
+# Rejected the null that the sereis contain a unit root in favour of stationarity
+lan.ms.kpss <- kpss.test(ts.lan.ms)
+# Fail to reject the null that the proces is STATIONARY
+# Stationary
+```
+
+```{r Stationarity test for market share output, echo=FALSE}
+# Output
+stationarity_test_table.ms <- data.frame(
+                                      "Fragrance" = c("c1 Si", "c2 Black Opium", "c3 La Vie Est Belle"),
+                                      "ADF" = c(ar.ms.adf$p.value, c2.ms.adf$p.value, lan.ms.adf$p.value),
+                                      "PP" = c(ar.ms.pp$p.value, c2.ms.pp$p.value, lan.ms.pp$p.value),
+                                      "KPSS" = c(ar.ms.kpss$p.value, c2.ms.kpss$p.value, lan.ms.kpss$p.value),
+                                      "Conclusion" = "Stationary")
+
+colnames(stationarity_test_table.ms) <- c("Fragrance", "ADF", "PP", "KPSS", "Conclusion")
+
+colnames(stationarity_test_table.ms)[2] <- paste0(names(stationarity_test_table.ms)[2], footnote_marker_symbol(1))
+colnames(stationarity_test_table.ms)[3] <- paste0(names(stationarity_test_table.ms)[3], footnote_marker_symbol(2))
+colnames(stationarity_test_table.ms)[4] <- paste0(names(stationarity_test_table.ms)[4], footnote_marker_symbol(3))
+
+kable(stationarity_test_table.ms, format = "latex", booktabs = T, caption = "Stationarity Test Results (P-Value) for Relative Size of the Focal Brands", escape = F) %>% kable_styling(latex_options = c("striped", "hold_position")) %>% footnote(symbol = c("Unit Root; ", "Unit Root; ", "Stationary; "), symbol_title = "Null Hypothesis", footnote_as_chunk = T)
+```
+
+Using the relative market share of the three focal brands as our dependent variable we get a regression output as expected. Cross investment variables have non-positive coefficients. This result suggests that these three focal brands are indeed competing with each other even when the bundling mechanism is in effect. An interesting observation from the condensed regression output below the fact that price variables of c1 and c2 have non-positive coefficients whereas c3's coefficient is positive.
+
+```{r Competitive effects, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+# Normal Model
+
+# c1 Si
+ar.comp <- lm(ar.mrkt.share ~ I(Investment_c1_SI/10000) + I(Investment_c2_BLACK_OPIUM/10000) + I(Investment_c3_LA_VIE_EST_BELLE/10000) + 
+                            Price_c1_SI + ar.mrkt.share.lag,
+                            data = c.data)
+
+# Robust Standard Errors
+ar.comp.vcov.robust <- vcovHC(ar.comp, "HC1")
+ar.comp.robust_se    <- sqrt(diag(ar.comp.vcov.robust))
+
+# # Functional form
+# ggplot(ar.comp, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+# # High collinearity
+# vif(ar.comp)
+# # Output
+# stargazer(ar.comp, type = "text",
+#           title = "Competitive Effect for c1", header = FALSE,
+#           omit.stat = "f",digits = 7)
+
+# c2 
+c2.comp <- lm(c2.mrkt.share ~ I(Investment_c1_SI/10000) + I(Investment_c2_BLACK_OPIUM/10000) + I(Investment_c3_LA_VIE_EST_BELLE/10000) + 
+                           Price_c2_BLACK_OPIUM + c2.mrkt.share.lag,
+                            data = c.data)
+
+# Robust Standard Errors
+c2.comp.vcov.robust <- vcovHC(c2.comp, "HC1")
+c2.comp.robust_se    <- sqrt(diag(c2.comp.vcov.robust))
+
+# # Functional form
+# ggplot(c2.comp, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+# # High collinearity
+# vif(c2.comp)
+# # Output
+# stargazer(c2.comp, type = "text",
+#           title = "Competitive Effect for c2", header = FALSE,
+#           omit.stat = "f",digits = 7)
+
+# c3
+lan.comp <- lm(lan.mrkt.share ~ I(Investment_c1_SI/10000) + I(Investment_c2_BLACK_OPIUM/10000) + I(Investment_c3_LA_VIE_EST_BELLE/10000) + 
+                            Price_c3_LA_VIE_EST_BELLE + lan.mrkt.share.lag,
+                            data = c.data)
+
+# Robust Standard Errors
+lan.comp.vcov.robust <- vcovHC(lan.comp, "HC1")
+lan.comp.robust_se    <- sqrt(diag(lan.comp.vcov.robust))
+
+# # Functional form
+# ggplot(lan.comp, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+# # High collinearity
+# vif(lan.comp)
+# # Output
+# stargazer(lan.comp, type = "text",
+#           title = "Competitive Effect for c3", header = FALSE,
+#           omit.stat = "f",digits = 8)
+
+# Linear Model worked pretty Well
+
+# stargazer(ar.comp,c2.comp,lan.comp, type = "text")
+```
+
+```{r Competitive Effects Regression Output Condensed, echo=FALSE, results='asis', fig.align="center"}
+stargazer(ar.comp, c2.comp, lan.comp, 
+          type = "latex",
+          dep.var.labels = c("c1 Market Share", "c2 Market Share", "c3 Market Share"),
+          omit.stat=c("LL","ser","f"),
+          no.space = T,
+          title = "OLS (Competitive Effects) Condensed",
+          se = c(list(ar.comp.robust_se), list(c2.comp.robust_se), list(lan.comp.robust_se)),
+          font.size = "normalsize",
+          header = F,
+          keep = c("\\Investment_c1_SI/10000\\b", "\\Investment_c2_BLACK_OPIUM/10000\\b", "\\Investment_c3_LA_VIE_EST_BELLE/10000\\b",
+                   "Price"),
+          covariate.labels=c("Investment c1 in 10000s", "Investment c2 in 10000s", "Investment c3 in 10000s",
+                             "Price c1", "Price c2", "L Price c3"),
+          table.placement = "H"
+)
+```
+
+```{r Competiitve effects - (Budget) [Not Needed], include=FALSE}
+# ar.comp.1 <- lm(ar.mrkt.share ~ I(Investment_c1_SI/10000)*main_selling_period + I((Investment_c1_SI/10000)^2) +
+#                                 Price_c1_SI + ar.mrkt.share.lag,
+#                                 data = c.data)
+# 
+# # # Functional form
+# # ggplot(ar.comp.1, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+# # # High collinearity
+# # vif(ar.comp.1)
+# # Output
+# # stargazer(ar.comp.1, type = "text",
+# #           title = "Competitive Effect for c1 (Budget)", header = FALSE,
+# #           omit.stat = "f",digits = 7)
+# 
+# # c2 
+# c2.comp.1 <- lm(c2.mrkt.share ~ I(Investment_c2_BLACK_OPIUM/10000)*main_selling_period + I((Investment_c2_BLACK_OPIUM/10000)^2) + 
+#                             Price_c2_BLACK_OPIUM + c2.mrkt.share.lag,
+#                             data = c.data)
+# 
+# # # Functional form
+# # ggplot(c2.comp.1, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+# # # High collinearity
+# # vif(c2.comp.1)
+# # Output
+# # stargazer(c2.comp.1, type = "text",
+# #           title = "Competitive Effect for c2 (Budget)", header = FALSE,
+# #           omit.stat = "f",digits = 7)
+# 
+# # c3
+# lan.comp.1 <- lm(lan.mrkt.share ~ I(Investment_c3_LA_VIE_EST_BELLE/10000)*main_selling_period + I((Investment_c3_LA_VIE_EST_BELLE/10000)^2) +
+#                             Price_c3_LA_VIE_EST_BELLE + lan.mrkt.share.lag,
+#                             data = c.data)
+# 
+# # # Functional form
+# # ggplot(lan.comp.1, aes(.fitted, .stdresid)) + geom_point() + geom_hline(yintercept = 0) + geom_smooth()
+# # # High collinearity
+# # vif(lan.comp.1)
+# 
+# # Output
+# # stargazer(lan.comp.1, type = "text",
+# #           title = "Competitive Effect for c3 (Budget)", header = FALSE,
+# #           omit.stat = "f",digits = 8)
+# 
+# 
+# stargazer(ar.comp.1,c2.comp.1,lan.comp.1, type = "text")
+# 
+# # The impact does't have quadratic properties neither does it change during peak times
+# # This can be because of low peak time observations
+```
+
+Further, the IV diagnostics below show that OLS is consistent and thus IV models were omitted.
+
+```{r Competitive Effects using IV, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+# c1 Si
+iv.ar.comp <- ivreg(ar.mrkt.share ~ I(Investment_c1_SI/10000) + I(Investment_c2_BLACK_OPIUM/10000) + I(Investment_c3_LA_VIE_EST_BELLE/10000) + 
+                            log(Price_c1_SI) +
+                            ar.mrkt.share.lag
+                            | c1 +  c2 + c3 + non_com_high_in +
+                            log(Price_c1_SI) +
+                            ar.mrkt.share.lag, 
+                            x = TRUE, data = c.data)
+
+iv.ar.comp.summary <- summary(iv.ar.comp, vcov = sandwich, diagnostics = TRUE)
+iv.ar.comp.summary <- data.frame(iv.ar.comp.summary$diagnostics)
+iv.ar.comp.summary <- iv.ar.comp.summary$p.value
+
+# # High collinearity
+# vif(iv.ar.comp)
+# # High collinearity issues
+
+# Robust Standard Errors
+# vcov.robust <- vcovHC(iv.ar.comp, "HC1")
+# robust_se    <- sqrt(diag(vcov.robust))
+
+# stargazer(iv.ar.comp, type = "text",
+#           title = "Competitive Effects for c1", header = FALSE,
+#           se        = list(robust_se),
+#           omit.stat = "f")
+
+
+# c2
+iv.c2.comp <- ivreg(c2.mrkt.share ~ I(Investment_c1_SI/10000) + I(Investment_c2_BLACK_OPIUM/10000) + I(Investment_c3_LA_VIE_EST_BELLE/10000) +  
+                            log(Price_c2_BLACK_OPIUM) +
+                            c2.mrkt.share.lag
+                            | c2 + non_com_high_in + c1 + c3 +
+                            log(Price_c2_BLACK_OPIUM) +
+                            c2.mrkt.share.lag, 
+                            x = TRUE, data = c.data)
+
+iv.c2.comp.summary <- summary(iv.c2.comp, vcov = sandwich, diagnostics = TRUE)
+iv.c2.comp.summary <- data.frame(iv.c2.comp.summary$diagnostics)
+iv.c2.comp.summary <- iv.c2.comp.summary$p.value
+
+# # High collinearity
+# vif(iv.c2.comp)
+# # High collinearity issues
+
+# Robust Standard Errors
+# vcov.robust <- vcovHC(iv.c2.comp, "HC1")
+# robust_se    <- sqrt(diag(vcov.robust))
+
+# stargazer(iv.c2.comp, type = "text",
+#           title = "Competitive Effects for c2", header = FALSE,
+#           se        = list(robust_se),
+#           omit.stat = "f")
+
+
+# c3
+iv.lan.comp <- ivreg(lan.mrkt.share ~ I(Investment_c1_SI/10000) + I(Investment_c2_BLACK_OPIUM/10000) + I(Investment_c3_LA_VIE_EST_BELLE/10000) + 
+                            log(Price_c3_LA_VIE_EST_BELLE) +
+                            lan.mrkt.share.lag
+                            | c2 + non_com_high_in + c1 + c3 +
+                            log(Price_c3_LA_VIE_EST_BELLE) +
+                            lan.mrkt.share.lag, 
+                            x = TRUE, data = c.data)
+
+iv.lan.comp.summary <- summary(iv.lan.comp, vcov = sandwich, diagnostics = TRUE)
+iv.lan.comp.summary <- data.frame(iv.lan.comp.summary$diagnostics)
+iv.lan.comp.summary <- iv.lan.comp.summary$p.value
+
+# # High collinearity
+# vif(iv.lan.comp)
+# # High collinearity issues
+
+# Robust Standard Errors
+# vcov.robust <- vcovHC(iv.lan.comp, "HC1")
+# robust_se    <- sqrt(diag(vcov.robust))
+
+# stargazer(iv.lan.comp, type = "text",
+#           title = "Competitive Effects for c3", header = FALSE,
+#           se        = list(robust_se),
+#           omit.stat = "f")
+
+
+# stargazer(iv.ar.comp, iv.c2.comp, iv.lan.comp, type = "text")
+
+# Linear models fit better -  no need of iV also the Wu- Hausman test indicates that!
+```
+
+```{r Competitive Effects using IV Diagonistic Test Output, echo=FALSE}
+iv_diagonistic_comp <- data.frame(
+                                                 "Fragrance" = c("c1 Si", "c2 Black Opium", "c3 La Vie Est Belle"),
+                                                 "Weak Test 1" = c(iv.ar.comp.summary[1],iv.c2.comp.summary[1],iv.lan.comp.summary[1]),
+                                                 "Weak Test 2" = c(iv.ar.comp.summary[2],iv.c2.comp.summary[2],iv.lan.comp.summary[2]),
+                                                 "Weak Test 3" = c(iv.ar.comp.summary[3],iv.c2.comp.summary[3],iv.lan.comp.summary[3]),
+                                                 "Wu-Hausman Test" = c(iv.ar.comp.summary[4],iv.c2.comp.summary[4],iv.lan.comp.summary[4]),
+                                                 "Sargan Test" = c(iv.ar.comp.summary[5],iv.c2.comp.summary[5],iv.lan.comp.summary[5])
+)
+colnames(iv_diagonistic_comp) <- c("Fragrance", "Weak Test 1", "Weak Test 2", "Weak Test 3",  "Wu-Hausman Test", "Sargan Test")
+
+# kable(iv_diagonistic_comp, format = "latex", booktabs = T, caption = "IV Regression Model's Diagnostics (P-Value) for Competitive Effects") %>% kable_styling(latex_options = c("striped", "hold_position"))
+
+names(iv_diagonistic_comp)[2] <- paste0(names(iv_diagonistic_comp)[2], footnote_marker_symbol(1, "latex"))
+names(iv_diagonistic_comp)[3] <- paste0(names(iv_diagonistic_comp)[3], footnote_marker_symbol(1, "latex"))
+names(iv_diagonistic_comp)[4] <- paste0(names(iv_diagonistic_comp)[4], footnote_marker_symbol(1, "latex"))
+names(iv_diagonistic_comp)[5] <- paste0(names(iv_diagonistic_comp)[5], footnote_marker_symbol(2, "latex"))
+names(iv_diagonistic_comp)[6] <- paste0(names(iv_diagonistic_comp)[6], footnote_marker_symbol(3, "latex"))
+
+kable(iv_diagonistic_comp, format = "latex", booktabs = T, caption = "IV Regression Model's Diagnostics (P-Value) for Competitive Effects", escape = F) %>% kable_styling(latex_options = c("striped", "hold_position"), font_size = 8) %>% footnote(symbol = c("Instruments not Relevant; ", "OLS is consistent; ", "Instruments are valid; "), symbol_title = "Null Hypothesis", footnote_as_chunk = T)
+```
+
+```{r not used Adstock Plots, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+# Price graphs
+p.adstock.data <- data[,c('Date', "ar.adstock", "c2.adstock", "lan.adstock")]
+p.adstock.data <- melt(p.adstock.data, id.vars = c("Date"))
+
+# Plot
+p.adstock <- ggplot(p.adstock.data, aes(y= value, x = Date)) + geom_line(aes(color = price.data$variable)) + 
+                     annotate("rect", xmin = 	data$Date[6], xmax =  data$Date[7], alpha = .2, ymin = min(price.data$value), ymax = max(price.data$value), fill = 'red') +
+                     annotate("rect", xmin = 	data$Date[58], xmax =  data$Date[59], alpha = .2, ymin = min(p.adstock.data$value), ymax = max(p.adstock.data$value), fill = 'red') +
+                     annotate("rect", xmin = 	data$Date[110], xmax =  data$Date[111], alpha = .2, ymin = min(p.adstock.data$value), ymax = max(p.adstock.data$value), fill = 'red') +
+                     annotate("rect", xmin = 	data$Date[48], xmax =  data$Date[52], alpha = .2, ymin = min(p.adstock.data$value), ymax = max(p.adstock.data$value), fill = 'green') +
+                     annotate("rect", xmin = 	data$Date[100], xmax =  data$Date[104], alpha = .2, ymin = min(p.adstock.data$value), ymax = max(p.adstock.data$value), fill = 'green') +
+                     annotate("rect", xmin = 	data$Date[18], xmax =  data$Date[19], alpha = .2, ymin = min(p.adstock.data$value), ymax = max(p.adstock.data$value), fill = 'lightblue') +
+                     annotate("rect", xmin = 	data$Date[70], xmax =  data$Date[71], alpha = .2, ymin = min(p.adstock.data$value), ymax = max(p.adstock.data$value), fill = 'lightblue') +
+                     annotate("rect", xmin = 	data$Date[123], xmax =  data$Date[124], alpha = .2, ymin = min(p.adstock.data$value), ymax = max(p.adstock.data$value), fill = 'lightblue') +
+                     annotate("rect", xmin = 	data$Date[37], xmax =  data$Date[38], alpha = .2, ymin = min(p.adstock.data$value), ymax = max(p.adstock.data$value), fill = 'orange') +
+                     annotate("rect", xmin = 	data$Date[89], xmax =  data$Date[90], alpha = .2, ymin = min(p.adstock.data$value), ymax = max(p.adstock.data$value), fill = 'orange') +
+                     theme_few() + labs(y = "Adstock", title = "Adstock for the Three Focal Brands") + 
+                     theme(legend.position='none',axis.text.x = element_text(angle = 90, hjust = 1), plot.title = element_text(hjust = 0.5)) +
+                     scale_x_date(date_labels= "%b %y", date_breaks  ="1 month") +  theme(axis.title.x=element_blank()) + 
+                     scale_y_continuous(limits = c(min(p.adstock.data$value), max(p.adstock.data$value))) + theme(legend.position="top")
+```
+
+##  Advice on Budget Allocation and Optimisation for the Rest of the Year 2017
+
+This section is divided into two subsections: Pricing and Communication Strategy.
+
+### Pricing Strategy
+
+**c1 Si**\newline
+
+As indicated by the Clout and Vulnerability Map in section 2.1.2, c1 Si has a relatively stronger position in the market. Therefore c1 can be a price setter in the fragrance market in Italy. Further, c1's price elasticity of -7.66 according to OLS estimates suggests that its customers are price elastic, and a small decrease in price can help c1 increase its revenue by a lot (for more information, please refer to Table 13: Cross Advertising Elasticity Matrix Summary). Further c1's price elasticity is unchanged in peak periods, and this should be considered into account while formulating a pricing strategy. Having said that c1 could decrease the price in main selling periods to achieve the maximum increase in its revenue. In the rest of 2017, c1 can drop its price in December to take advantage of the surge in demand.\newline
+
+\pagebreak
+
+**c2 Black Opium**\newline
+
+Gaining insight from the Clout and Vulnerability Map, c2 should watch out for the price of c1 Si since it has a large and a significant impact on the sales quantity for c2's fragrance. For every 1% decrease in c1 Si's price c2 loses out on 2.34% of its sales. Since c2's own price elasticity is highly elastic 
+(-4.82), c2 should also decrease its price in the main selling periods (for more information, please refer to Table 13: Cross Advertising Elasticity Matrix Summary). Similar to c1, c2 should introduce a price drop in December to take advantage of the surge in demand.\newline
+
+**c3 La Vie Est Belle**\newline
+
+The Clout and Vulnerability Map suggests that c3 caters to a different customer base and thus it can also act as a price setter in the market. Further, it is interesting to note that c3's price elasticity is inelastic (-0.44) suggesting that c3's customer in Italy might be less responsive to a price change. The inelastic price elasticity can be due to c3's brand value or the taste and preferences of the Italian customers.  This observation is further supported by the fact that price variable of c3 has a positive coefficient in the competitive OLS models (for more information, please refer to Table 18: OLS (Competitive Effects) Condensed). The inelastic nature of c3's price can help increase c3's revenue by increasing its price. It is interesting to note that c3's price elasticity turns highly elastic in peak periods (-3.89) (Table 7: Own Price Elasticity Summary). Thus, c3 should increase its price in normal periods and decrease it in peak periods to attain higher revenue. \newline
+
+### Communication Strategy
+
+**c1 Si**\newline
+
+Interestingly, the responsiveness of customers towards c1's Communication is the same in both peak and normal periods. This suggests that c1 should advertise heavily in peak periods. Having said that c1's communication spend has a diminishing return property. Therefore, c1 shouldn't spend more than 520,000 on communication (Obtained by using first differentiation, for more information, please refer to Table 9: OLS (Own Communication Impact) Condensed).\newline 
+
+c1's alpha value or the memory effect is also sizeable (0.63) suggesting that c1 can stop spending on communication towards the end of December. This strategy is justified because the memory effect will tail off rather than cutting off sharply. Although the bundling mechanism helps increase c1's sales when c3 increases its communication spend, It is quintessential to note that it has a negative impact on the relative market share for c1. This negative impact suggests that although c3's communication spend increase c1 Si's sales, it has a cannibalising impact on c1 Si's relative market share.\newline
+
+**c2 Black Opium**\newline
+
+Similar to c1, c2 also doesn't have a different impact of communication in peak periods. Therefore, c2 should try to maximise its return from communication expenditure by clustering its expenditure near the peak sales period. Unlike c1, c2 doesn't have a significant diminishing return property. However, c2 should be cautious in spending a lot.\newline
+
+Coming over to the memory effect, c2 has the highest alpha (0.73). Therefore, it can stop advertising even before c1 as c2's memory effect would take longer to tail off. The higher alpha can help c2 to save cost as c2 doesn't have to advertise as frequently as the other focal brands to maintain a specific adstock level. c2 also experience the same cannibalising impact and therefore should watch out for investment done by its focal competitors.\newline
+
+**c3 La Vie Est Belle**\newline
+
+c3's communication follows a similar pattern as described above. Its communication response doesn't change in the peak periods. Therefore, most of its investment should be clustered near main selling periods. Like c1, it also experiences the diminishing return property. However, the diminishing point (1,300,000) is much higher compared to c1's diminishing point (520,000).\newline 
+
+c3's alpha is 0.64. Thus it should also stop investing heavily before the peak season is over. Further, c3 should watch out for c2's investment as c2 has a cannibalising impact on its sales (for more information, please refer to Table 18: OLS (Competitive Effects) Condensed).
+
+\pagebreak
+
+# Conclusion
+
+This study finds that the price in the fragrance market in Italy is elastic with c3 being the exception in normal periods. Furthermore, customers become more responsive to prices in peak periods. This insight can be exploited by the fragrance brands to optimise their timing of price reductions.\newline 
+
+There are diminishing returns for the communication expenditure incurred by a majority of the focal brands. Further, fragrance brands need to tackle bundling options carefully as there can still be competitive effects in the market.
+
+\pagebreak
+\pagestyle{appendix}
+
+# Bibliography {-}
+<div id="refs"></div>
+
+\pagebreak
+
+# Appendix A {-}
+
+```{r Own Price Elasticity Regression Results, echo=FALSE, results='asis'}
+# Summary of the results
+stargazer(slm.ar.q1, slm.c2.q1, slm.lan.q1, 
+          type = "latex",
+          covariate.labels=c("Week Number","Main Selling Period","L Price c1","Investment c1 in 10000s",
+                             "L Price c2", "Investment c2 in 10000s",
+                             "L Price c3", "Investment c3 in 10000s", "Google Trend - Profumo",
+                             "L Lag c1 Sales Quantity", "L Price c1 * Main Selling Period",
+                             "L Lag c2 Sales Quantity", "L c2 c1 * Main Selling Period",
+                             "L Lag c3 Sales Quantity", "L Price c3 * Main Selling Period",
+                             "Constant"),
+          dep.var.labels = c("L c1 Sales Quanitity", "L c2 Sales Quanitity", "L c3 Sales Quanitity"),
+          omit.stat=c("LL","ser","f"),
+          no.space = T,
+          title = "OLS (Own Price Elasticity)",
+          se = c(list(slm.ar.q1.robust_se), list(slm.c2.q1.robust_se), list(slm.lan.q1.robust_se)),
+          notes = "L stands for Log",
+          font.size = "footnotesize",
+          header = F
+)
+```
+
+\pagebreak
+
+```{r Own Price Elasticity Regression Results using IV, echo=FALSE, results='asis'}
+stargazer(iv.c1.si, iv.c2.black.opium, iv.lan, 
+          type = "latex",
+          covariate.labels=c("Week Number", "L Price c1", "L Price c2", "L Price c3", "Main Selling Period","Investment c1 in 10000s",
+                             "Investment c2 in 10000s",
+                             "Investment c3 in 10000s", "Google Trend - Profumo",
+                             "L Lag c1 Sales Quantity", "L Price c1 * Main Selling Period",
+                             "L Lag c2 Sales Quantity", "L Price c2 * Main Selling Period",
+                             "L Lag c3 Sales Quantity", "L Price c3 * Main Selling Period",
+                             "Constant"),
+          dep.var.labels = c("L c1 Sales Quanitity", "L c2 Sales Quanitity", "L c3 Sales Quanitity"),
+          omit.stat=c("LL","ser","f"),
+          no.space = T,
+          title = "IV (Own Price Elasticity)",
+          se = c(list(iv.c1.si.robust_se), list(iv.c2.black.opium.robust_se), list(iv.lan.robust_se)),
+          notes = "L stands for Log",
+          font.size = "footnotesize",
+          header = F
+)
+```
+
+\pagebreak
+
+```{r Regression Model Output for OLS CPE, echo=FALSE, results='asis'}
+stargazer(slm.ar.q1.2, slm.c2.q1.2, slm.lan.q1.2, 
+          type = "latex",
+          covariate.labels=c("Main Selling Period", "L Price c1", "L Price c2", "Price c1", 
+                             "Price c3", "Google Trend - Profumo", "Lag c1 Sales Quantity",
+                             "L Price c1 * Main Selling Period", "L Price c2 * Main Selling Period",
+                             "Constant"),
+          dep.var.labels = c("c1 Sales Quanitity", "c2 Sales Quanitity", "L c3 Sales Quanitity"),
+          omit.stat=c("LL","ser","f"),
+          no.space = T,
+          title = "OLS (Cross Price Elasticity)",
+          se = c(list(slm.ar.q1.2.robust_se), list(slm.c2.q1.2.robust_se), list(slm.lan.q1.2.robust_se)),
+          notes = "L stands for Log",
+          font.size = "footnotesize",
+          header = F
+)
+```
+
+\pagebreak
+
+```{r Self Communication Regression Models Output, echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE, results= 'asis'}
+stargazer(ar.q2, c2.q2, lan.q2, 
+          type = "latex",
+          covariate.labels=c("Investment c2 in 10000s", "Investment c3 in 10000s", "Google Trend - Profumo", 
+                             "Investment c1 in 10000s", "L Lag c2 Sales Quantity", "Investment c2 in 10000s * Main Selling Period",
+                              "L Lag c3 Sales Quantity", "Investment c3 in 10000s * Main Selling Period", "Main Selling Period",
+                              "Investment c1 in 10000s Sqr", "L Price c1", "L Lag c1 Sales Quantity", "Investment c1 in 10000s * Main Selling Period",
+                              "Investment c2 in 10000s Sqr", "L Price c2", "Investment c3 in 10000s Sqr", "L Price c3",
+                              "Constant"),
+          dep.var.labels = c("L c1 Sales Quanitity", "L c2 Sales Quanitity", "L c3 Sales Quanitity"),
+          omit.stat=c("LL","ser","f"),
+          no.space = T,
+          title = "OLS (Own Communication Impact)",
+          se = c(list(ar.q2.robust_se), list(c2.q2.robust_se), list(lan.q2.robust_se)),
+          notes = "L stands for Log",
+          font.size = "footnotesize",
+          header = F
+)
+```
+
+\pagebreak
+
+```{r Advertising Own Impact Regression Output IV, echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE, results='asis'}
+stargazer(iv.c1.si.com.s, iv.c2.black.opium.com.s, iv.lan.com.s, 
+          type = "latex",
+          covariate.labels=c("Investment c2 in 10000s", "L Price c2", "Investment c3 in 10000s", "L Price c3", 
+                             "Google Trend - Profumo", "Investment c1 in 10000s", "Main Selling Period",
+                              "L Price c1", "L Lag c1 Sales Quantity", "L Lag c2 Sales Quantity",
+                              "L Lag c3 Sales Quantity",
+                              "Constant"),
+          dep.var.labels = c("L c1 Sales Quanitity", "L c2 Sales Quanitity", "L c3 Sales Quanitity"),
+          omit.stat=c("LL","ser","f"),
+          no.space = T,
+          title = "IV (Own Communication Impact)",
+          se = c(list(iv.c1.si.com.s.robust_se), list(iv.c2.black.opium.com.s.robust_se), list(iv.lan.com.s.robust_se)),
+          notes = "L stands for Log",
+          font.size = "footnotesize",
+          header = F
+)
+```
+
+\pagebreak
+
+```{r Cross Comunication Impact regression Output, echo=FALSE, results='asis'}
+stargazer(ar.q2.b.both, c2.q2.b.both, lan.q2.b.both, 
+          type = "latex",
+          dep.var.labels = c("L c1 Sales Quanitity", "L c2 Sales Quanitity", "L c3 Sales Quanitity"),
+          omit.stat=c("LL","ser","f"),
+          no.space = T,
+          title = "OLS (Cross Communication Impact)",
+          se = c(list(ar.q2.b.both.robust_se), list(c2.q2.b.both.robust_se), list(lan.q2.b.both.robust_se)),
+          notes = "L stands for Log",
+          font.size = "footnotesize",
+          header = F,
+          covariate.labels=c("Main Selling Period", "L Price c1", "L Price c2",  "L Price c3",
+                             "Google Trend - Profumo", "Investment c1 in 10000s", "Investment c2 in 10000s", 
+                              "Investment c3 in 10000s", "L Lag c1 Sales Quantity", "L Lag c2 Sales Quantity", 
+                              "L Lag c3 Sales Quantity",
+                              "Constant")
+)
+```
+
+\pagebreak
+
+```{r Adstock Models regression Output, echo=FALSE, results='asis'}
+stargazer(ar.q2.b.ad, c2.q2.b.ad, lan.q2.b.ad, 
+          type = "latex",
+          dep.var.labels = c("L c1 Sales Quanitity", "L c2 Sales Quanitity", "L c3 Sales Quanitity"),
+          omit.stat=c("LL","ser","f"),
+          no.space = T,
+          title = "OLS (Cross Communication Impact) using Adstock Models",
+          se = c(list(ar.q2.b.ad.robust_se), list(c2.q2.b.ad.robust_se), list(lan.q2.b.ad.robust_se)),
+          notes = "L stands for Log",
+          font.size = "footnotesize",
+          header = F,
+          covariate.labels=c("Main Selling Period", "L Price c1", "L Price c2",  "L Price c3",
+                             "Google Trend - Profumo", "Adstock c1 in 10000s", "Adstock c2 in 10000s", 
+                              "Adstock c3 in 10000s", "L Lag c1 Sales Quantity", "L Lag c2 Sales Quantity", 
+                              "L Lag c3 Sales Quantity",
+                              "Constant")
+)
+```
+
+\pagebreak
+
+```{r Competitive Effects Regression Output, echo=FALSE, results='asis'}
+stargazer(ar.comp, c2.comp, lan.comp, 
+          type = "latex",
+          dep.var.labels = c("c1 Market Share", "c2 Market Share", "c3 Market Share"),
+          omit.stat=c("LL","ser","f"),
+          no.space = T,
+          title = "OLS (Competitive Effects)",
+          se = c(list(ar.comp.robust_se), list(c2.comp.robust_se), list(lan.comp.robust_se)),
+          font.size = "footnotesize",
+          header = F,
+          covariate.labels=c("Investment c1 in 10000s", "Investment c2 in 10000s", "Investment c3 in 10000s",
+                             "Price c1", "Lag Market Share c1", "Price c2",  "Lag Market Share c2", "Price c3",
+                             "Lag Market Share c3", 
+                              "Constant")
+)
+```
+
+\pagebreak
+
+# Appendix - B {-}
+
+```{r c2_plot_time_series ,echo=FALSE, fig.cap="\\label{fig:figs}c2 Black Opium Sales Quanity and Communication Investment along with Major Perfume Selling Periods in Italy", out.width= "80%", fig.align="center"}
+c2_plot_path <- "endogeniety_graphs/c2_black_opium.png"
+include_graphics(c2_plot_path)
+
+# ![c2 Black Opium Sales Quanity and Communication Investment along with Major Perfume Selling Periods in Italy](endogeniety_graphs\c2_black_opium.pdf)
+```
+
+```{r lan_plot_time_series ,echo=FALSE, fig.cap="\\label{fig:figs}c3 La Vie Est Belle Sales Quanity and Communication Investment along with Major Perfume Selling Periods in Italy", out.width= "80%", fig.align="center"}
+lan_plot_path <- "endogeniety_graphs/c3_la_vie_est_belle.png"
+include_graphics(lan_plot_path)
+
+# ![c3 La Vie Est Belle Sales Quanity and Communication Investment along with Major Perfume Selling Periods in Italy](endogeniety_graphs\c3_la_vie_est_belle.pdf)
+```

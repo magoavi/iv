@@ -7,6 +7,7 @@
 
 [![Packagist](https://img.shields.io/badge/license-GNU%20GPL-blue.svg)](#license)
 [![Packagist](https://img.shields.io/badge/author-avimago-green.svg)](https://github.com/magoavi)
+[![Packagist](https://img.shields.io/badge/download-pdf-yellow.svg)](https://github.com/magoavi/iv/blob/master/iv.pdf)
 
 # ![alt text](https://raw.githubusercontent.com/magoavi/iv/master/p_2_cov.jpg?token=Af8z6lfgIeMnIdHPfcCNL95r5RFOp2kxks5bKCAewA%3D%3D)
 

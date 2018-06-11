@@ -1,7 +1,7 @@
 <center>
 
 **[Abstract](#abstract)** |
-**[License](#License)** 
+**[License](#license)** 
 
 </center>
 
